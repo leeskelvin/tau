@@ -1,2 +1,2 @@
-# tau
+# TAU
 Tiny Astro Utils
