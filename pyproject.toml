@@ -41,9 +41,6 @@ convention = "numpy"
 # not fit on one line.
 add-ignore = ["D107", "D105", "D102", "D100", "D200", "D205", "D400"]
 
-[tool.lsst_versions]
-write_to = "python/lsst/source/injection/version.py"
-
 [tool.ruff]
 exclude = [
     "__init__.py",

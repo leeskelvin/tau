@@ -2,14 +2,18 @@
 Tools for image manipulation and visualization.
 """
 
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable
 from matplotlib.colorbar import Colorbar
 from matplotlib.colors import Normalize
+from matplotlib.patches import Patch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.ndimage import gaussian_filter
+from skimage.measure import block_reduce
 
 from astropy.visualization import (
     AsinhStretch,
@@ -28,7 +32,7 @@ from astropy.visualization import (
     ZScaleInterval,
 )
 
-__all__ = ["aimage", "colorbar"]
+__all__ = ["colorbar", "aimage"]
 
 
 def _parse_inputs(
@@ -70,6 +74,8 @@ def _parse_inputs(
         image = image.image.array
     elif hasattr(image, "getImage"):
         image = image.getImage().array
+    elif hasattr(image, "array"):
+        image = image.array
     return image, mask, mask_plane_dict
 
 
@@ -161,6 +167,94 @@ def _get_stretch(
     return stretch
 
 
+def _add_mask(
+    ax: Axes,
+    mask: np.ndarray,
+    mask_plane_dict: dict | None,
+    binsize: int,
+    mask_planes: str | list[str] | None,
+    mask_alpha: float,
+    mask_fontsize: str | float,
+    mask_loc: str | int,
+    show_legend: bool,
+):
+    """Add a mask to an image plot.
+
+    Parameters
+    ----------
+    ax : Axes
+        The matplotlib axes object to add the mask to.
+    mask : np.ndarray
+        The mask data.
+    mask_plane_dict : dict | None
+        The mask plane dictionary, associating the mask plane names (keys)
+        with their binary bits (values).
+    binsize : int
+        The bin size to apply to the mask.
+    mask_planes : str | list[str] | None
+        The mask planes to show. If None, all planes are shown.
+    mask_alpha : float
+        The alpha value for the mask overlay.
+    mask_fontsize : str
+        The fontsize for the mask legend.
+    mask_loc : str
+        The location for the mask legend.
+    show_legend : bool
+        Show the mask legend, if available.
+    """
+    rows, cols = mask.shape
+    extent = (0, cols, 0, rows)
+
+    if mask_plane_dict is None:
+        mask_plane_bits = np.arange(int(np.log2(np.max(mask))) + 1)
+        mask_plane_dict = {f"{mask_plane_bit}": mask_plane_bit for mask_plane_bit in mask_plane_bits}
+    if mask_planes is None:
+        mask_planes = list(mask_plane_dict.keys())
+    if isinstance(mask_planes, str):
+        mask_planes = [mask_planes]
+    mask_plane_lookup = {
+        bit: plane
+        for plane, bit in sorted(mask_plane_dict.items(), key=lambda x: x[1])
+        if plane in mask_planes
+    }
+
+    if binsize != 1:
+        mask = block_reduce(mask, binsize, np.nanmean, 0, func_kwargs={"dtype": int})
+
+    mask_bits = np.full_like(mask, np.nan, dtype=float)
+    for bit, plane in reversed(mask_plane_lookup.items()):
+        mask_bits[mask & 2**bit == 2**bit] = bit
+
+    cmap = plt.get_cmap("tab20")
+    ax.imshow(
+        mask_bits,
+        cmap=cmap,
+        alpha=mask_alpha,
+        vmin=0,
+        vmax=20,
+        origin="lower",
+        extent=extent,
+        interpolation="nearest",
+    )
+
+    if show_legend:
+        legend_patches = []
+        for bit, plane in mask_plane_lookup.items():
+            color = cmap(bit)
+            legend_patches.append(Patch(color=color, label=plane))
+        ax.legend(
+            handles=legend_patches,
+            loc=mask_loc,
+            framealpha=0.5,
+            borderaxespad=0.2,
+            handlelength=0.9,
+            columnspacing=0.9,
+            handletextpad=0.5,
+            fontsize=mask_fontsize,
+            fancybox=False,
+        )
+
+
 def colorbar(mappable: ScalarMappable) -> Colorbar:
     """Create a colorbar for a given mappable.
 
@@ -185,9 +279,11 @@ def colorbar(mappable: ScalarMappable) -> Colorbar:
 
 
 def aimage(
+    # input data
     image: Any,
     mask: Any = None,
     mask_plane_dict: dict | None = None,
+    # image display
     interval: str | BaseInterval = "percentile",
     stretch: str | BaseStretch = "linear",
     vmin: None | int | float = None,
@@ -198,15 +294,32 @@ def aimage(
     slope: float = 1.0,
     intercept: float = 0.0,
     cmap="grey",
+    fwhm: float = 0.0,
+    binsize: int = 1,
+    # mask display
+    mask_planes: str | list[str] | None = None,
+    mask_alpha: float = 1.0,
+    mask_fontsize: str | float = "xx-small",
+    mask_loc: str | int = "upper left",
+    # figure options
+    title: str | None = None,
+    title_fontsize: str | float = "x-small",
+    title_loc: Literal["left", "center", "right"] = "left",
     figsize: tuple[float, float] = (6, 6),
     dpi: int = 300,
+    fname: str | None = None,
+    # show toggles
     show_cbar: bool | None = None,
     show_mask: bool = False,
+    show_legend: bool = True,
 ):
     image, mask, mask_plane_dict = _parse_inputs(image, mask, mask_plane_dict)
     assert isinstance(image, np.ndarray)
     assert mask is None or isinstance(mask, np.ndarray)
     assert mask_plane_dict is None or isinstance(mask_plane_dict, dict)
+
+    rows, cols = image.shape
+    extent = (0, cols, 0, rows)
 
     if vmin is None and vmax is None:
         vmin, vmax = _get_vmin_vmax(image, interval, pc, contrast)
@@ -221,10 +334,26 @@ def aimage(
 
     fig = plt.figure(figsize=figsize, dpi=dpi)
     ax = fig.add_subplot(1, 1, 1)
-    im = ax.imshow(image, origin="lower", norm=norm, cmap=cmap)
 
-    if show_mask:
-        pass
+    if fwhm > 0:
+        sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
+        nan_pixels = np.isnan(image)
+        image[nan_pixels] = 0
+        image = gaussian_filter(image, sigma)
+        image[nan_pixels] = np.nan
+
+    if binsize != 1:
+        image = block_reduce(image, binsize, np.nanmean, 0)
+
+    im = ax.imshow(image, cmap=cmap, norm=norm, origin="lower", extent=extent)
+
+    if title is not None:
+        ax.set_title(title, loc=title_loc, fontsize=title_fontsize)
+
+    if show_mask and mask is not None:
+        _add_mask(
+            ax, mask, mask_plane_dict, binsize, mask_planes, mask_alpha, mask_fontsize, mask_loc, show_legend
+        )
 
     if show_cbar is None:
         show_cbar = True if image.ndim == 2 else False
@@ -233,4 +362,7 @@ def aimage(
         cbar = colorbar(im)
         cbar.set_ticks(norm.inverse(np.linspace(0, 1, 11)))
 
-    plt.show()
+    if fname is not None:
+        plt.savefig(fname, dpi=dpi, bbox_inches="tight")
+    else:
+        plt.show()

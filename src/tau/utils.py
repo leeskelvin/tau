@@ -15,7 +15,7 @@ def print_session_info():
     print(f"# Session Info on {time.strftime('%Y-%m-%d at %H:%M:%S %Z', time.localtime(time.time()))}\n")
 
     # Python info
-    print(f"## Python Interpreter\n\nVersion: {sys.version}\nExecutable: {sys.executable}\n")
+    print(f"## Python Interpreter\n\nVersion: {sys.version}  \nExecutable: {sys.executable}\n")
 
     # LSST info
     packages = getEnvironmentPackages(True)
