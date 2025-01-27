@@ -255,13 +255,15 @@ def _add_mask(
         )
 
 
-def colorbar(mappable: ScalarMappable) -> Colorbar:
+def colorbar(mappable: ScalarMappable, norm: ImageNormalize | None = None) -> Colorbar:
     """Create a colorbar for a given mappable.
 
     Parameters
     ----------
     mappable : ScalarMappable
         The mappable object to create a colorbar for.
+    norm : ImageNormalize | None, optional
+        The normalization object to use for the colorbar.
 
     Returns
     -------
@@ -275,6 +277,19 @@ def colorbar(mappable: ScalarMappable) -> Colorbar:
     cax = divider.append_axes("right", size="5%", pad=0.05)
     cbar = fig.colorbar(mappable, cax=cax)
     plt.sca(last_axes)
+
+    if norm is not None:
+        cbar.set_ticks(norm.inverse(np.linspace(0, 1, 11)))
+
+    # Generate unique tick labels with increasing precision as necessary
+    tick_values = cbar.get_ticks()
+    cbar.set_ticks(tick_values)
+    for decimals in range(0, 7):
+        formatted_tick_values = [f"{tick_value:.{decimals}f}" for tick_value in tick_values]
+        if len(set(formatted_tick_values)) == len(tick_values):
+            cbar.ax.set_yticklabels(formatted_tick_values)
+            break
+
     return cbar
 
 
@@ -359,8 +374,7 @@ def aimage(
         show_cbar = True if image.ndim == 2 else False
 
     if show_cbar and norm is not None:
-        cbar = colorbar(im)
-        cbar.set_ticks(norm.inverse(np.linspace(0, 1, 11)))
+        _ = colorbar(im, norm=norm)
 
     if fname is not None:
         plt.savefig(fname, dpi=dpi, bbox_inches="tight")
