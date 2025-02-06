@@ -2,7 +2,8 @@
 Tools for image manipulation and visualization.
 """
 
-from typing import Any, Literal, Sequence
+from collections.abc import Sequence
+from typing import Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -100,7 +101,7 @@ def _get_vmin_vmax(
     vmin, vmax : int, float
         The vmin and vmax values.
     """
-    pc = [pc] if isinstance(pc, (int, float)) else pc
+    pc = [pc] if isinstance(pc, int | float) else pc
     match interval:
         case "percentile":
             if (len(pc) == 2 and pc == [0, 100]) or (len(pc) == 1 and pc[0] == 100):
@@ -328,6 +329,7 @@ def aimage(
     show_mask: bool = False,
     show_legend: bool = True,
 ):
+    """Display an image with optional mask overlay."""
     image, mask, mask_plane_dict = _parse_inputs(image, mask, mask_plane_dict)
     assert isinstance(image, np.ndarray)
     assert mask is None or isinstance(mask, np.ndarray)
@@ -375,6 +377,11 @@ def aimage(
 
     if show_cbar and norm is not None:
         _ = colorbar(im, norm=norm)
+
+    if fname is not None:
+        plt.savefig(fname, dpi=dpi, bbox_inches="tight")
+    else:
+        plt.show()
 
     if fname is not None:
         plt.savefig(fname, dpi=dpi, bbox_inches="tight")
