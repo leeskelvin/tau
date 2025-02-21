@@ -11,6 +11,9 @@ __all__ = ["print_session_info"]
 
 
 def print_session_info():
+    """Print session start time, Python interpreter, and LSST Science
+    Pipelines package information.
+    """
     # Time info
     print(f"# Session Info on {time.strftime('%Y-%m-%d at %H:%M:%S %Z', time.localtime(time.time()))}\n")
 

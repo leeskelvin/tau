@@ -120,7 +120,6 @@ def make_visit_mosaic(
     cameraMI : `~lsst.afw.image.MaskedImageF`
         The camera image with the detectors placed.
     """
-
     # Get camera detectors and the camera bounding box
     detector_ids = [exposure.getDetector().getId() for exposure in exposures]
     if crop:
@@ -210,26 +209,21 @@ class Visit:
         self._dataset_refs = self._query_datasets(**kwargs)
         data_ids = [dataset_ref.dataId for dataset_ref in self._dataset_refs]
         if "visit" in data_ids[0]:
-            unique_visits = list(set([data_id["visit"] for data_id in data_ids]))
+            unique_visits = list({data_id["visit"] for data_id in data_ids})
             if len(unique_visits) > 1:
                 examples = str(unique_visits[:5])[1:-1] + ("..." if len(unique_visits) > 5 else "")
                 raise ValueError(f"Multiple visits found in query: {examples}")
         elif "exposure" in data_ids[0]:
-            unique_exposures = list(set([data_id["exposure"] for data_id in data_ids]))
+            unique_exposures = list({data_id["exposure"] for data_id in data_ids})
             if len(unique_exposures) > 1:
                 examples = str(unique_exposures[:5])[1:-1] + ("..." if len(unique_exposures) > 5 else "")
                 raise ValueError(f"Multiple exposures found in query: {examples}")
         self._dataset_refs.sort(key=lambda dataset_ref: dataset_ref.dataId["detector"])
         self._data_ids = [dataset_ref.dataId for dataset_ref in self._dataset_refs]
         self.detector_ids = [data_id["detector"] for data_id in self._data_ids]
-        self.dataset_refs = {
-            detector_id: dataset_ref
-            for detector_id, dataset_ref in zip(self.detector_ids, self._dataset_refs)
-        }
+        self.dataset_refs = dict(zip(self.detector_ids, self._dataset_refs))
         self.data_id = self._get_visit_data_id(self._data_ids)
-        self.data_ids = {
-            detector_id: data_id for detector_id, data_id in zip(self.detector_ids, self._data_ids)
-        }
+        self.data_ids = dict(zip(self.detector_ids, self._data_ids))
         self.run = self._dataset_refs[0].run
         try:
             self.info = butler.get(self._dataset_refs[0].makeComponentRef("visitInfo"))

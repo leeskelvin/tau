@@ -2,20 +2,12 @@
 Tools for image manipulation and visualization.
 """
 
+import logging
 from collections.abc import Sequence
 from typing import Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.axes import Axes
-from matplotlib.cm import ScalarMappable
-from matplotlib.colorbar import Colorbar
-from matplotlib.colors import Normalize
-from matplotlib.patches import Patch
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from scipy.ndimage import gaussian_filter
-from skimage.measure import block_reduce
-
 from astropy.visualization import (
     AsinhStretch,
     AsymmetricPercentileInterval,
@@ -32,8 +24,21 @@ from astropy.visualization import (
     SinhStretch,
     ZScaleInterval,
 )
+from matplotlib.axes import Axes
+from matplotlib.cm import ScalarMappable
+from matplotlib.colorbar import Colorbar
+from matplotlib.colors import Normalize
+from matplotlib.figure import Figure
+from matplotlib.patches import Patch
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.axes_grid1.axes_size import Fixed
+from scipy.ndimage import gaussian_filter
+from skimage.measure import block_reduce
 
 __all__ = ["colorbar", "aimage"]
+
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_inputs(
@@ -70,6 +75,12 @@ def _parse_inputs(
     # mask
     if mask is None and hasattr(image, "mask"):
         mask = image.mask.array
+    elif hasattr(mask, "image"):
+        mask = mask.image.array
+    elif hasattr(mask, "getImage"):
+        mask = mask.getImage().array
+    elif hasattr(mask, "array"):
+        mask = mask.array
     # image
     if hasattr(image, "image"):
         image = image.image.array
@@ -77,6 +88,10 @@ def _parse_inputs(
         image = image.getImage().array
     elif hasattr(image, "array"):
         image = image.array
+
+    if image.shape != mask.shape:
+        logger.warning(" The image and mask shapes do not match.")
+
     return image, mask, mask_plane_dict
 
 
@@ -173,6 +188,7 @@ def _add_mask(
     mask: np.ndarray,
     mask_plane_dict: dict | None,
     binsize: int,
+    rot90: int,
     mask_planes: str | list[str] | None,
     mask_alpha: float,
     mask_fontsize: str | float,
@@ -204,7 +220,7 @@ def _add_mask(
         Show the mask legend, if available.
     """
     rows, cols = mask.shape
-    extent = (0, cols, 0, rows)
+    extent = (0, cols, 0, rows) if rot90 in [0, 2] else (0, rows, 0, cols)
 
     if mask_plane_dict is None:
         mask_plane_bits = np.arange(int(np.log2(np.max(mask))) + 1)
@@ -227,6 +243,8 @@ def _add_mask(
         mask_bits[mask & 2**bit == 2**bit] = bit
 
     cmap = plt.get_cmap("tab20")
+    if rot90 != 0:
+        mask_bits = np.rot90(mask_bits, k=rot90)
     ax.imshow(
         mask_bits,
         cmap=cmap,
@@ -256,7 +274,9 @@ def _add_mask(
         )
 
 
-def colorbar(mappable: ScalarMappable, norm: ImageNormalize | None = None) -> Colorbar:
+def colorbar(
+    mappable: ScalarMappable, norm: ImageNormalize | None = None, fixed_size: float = 0.15, pad: float = 0.05
+) -> Colorbar:
     """Create a colorbar for a given mappable.
 
     Parameters
@@ -265,6 +285,10 @@ def colorbar(mappable: ScalarMappable, norm: ImageNormalize | None = None) -> Co
         The mappable object to create a colorbar for.
     norm : ImageNormalize | None, optional
         The normalization object to use for the colorbar.
+    fixed_size : float, optional
+        The fixed size of the colorbar (inches).
+    pad : float, optional
+        The padding between the mappable and the colorbar.
 
     Returns
     -------
@@ -275,7 +299,7 @@ def colorbar(mappable: ScalarMappable, norm: ImageNormalize | None = None) -> Co
     ax = mappable.axes
     fig = ax.figure
     divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cax = divider.append_axes("right", size=Fixed(fixed_size), pad=pad)
     cbar = fig.colorbar(mappable, cax=cax)
     plt.sca(last_axes)
 
@@ -312,17 +336,21 @@ def aimage(
     cmap="grey",
     fwhm: float = 0.0,
     binsize: int = 1,
+    rot90: int = 0,
     # mask display
     mask_planes: str | list[str] | None = None,
     mask_alpha: float = 1.0,
     mask_fontsize: str | float = "xx-small",
     mask_loc: str | int = "upper left",
-    # figure options
-    title: str | None = None,
+    # title
+    title: object = None,
     title_fontsize: str | float = "x-small",
     title_loc: Literal["left", "center", "right"] = "left",
+    # figure options
     figsize: tuple[float, float] = (6, 6),
     dpi: int = 300,
+    fig: Figure | None = None,
+    ax: Axes | None = None,
     fname: str | None = None,
     # show toggles
     show_cbar: bool | None = None,
@@ -336,10 +364,12 @@ def aimage(
     assert mask_plane_dict is None or isinstance(mask_plane_dict, dict)
 
     rows, cols = image.shape
-    extent = (0, cols, 0, rows)
+    extent = (0, cols, 0, rows) if rot90 in [0, 2] else (0, rows, 0, cols)
 
-    if vmin is None and vmax is None:
-        vmin, vmax = _get_vmin_vmax(image, interval, pc, contrast)
+    if vmin is None or vmax is None:
+        vmin0, vmax0 = _get_vmin_vmax(image, interval, pc, contrast)
+        vmin = vmin0 if vmin is None else vmin
+        vmax = vmax0 if vmax is None else vmax
     assert vmin is not None and vmax is not None
 
     if isinstance(stretch, str):
@@ -349,8 +379,12 @@ def aimage(
     norm = ImageNormalize(vmin=vmin, vmax=vmax, stretch=stretch, clip=True)  # type: ignore
     assert isinstance(norm, Normalize)
 
-    fig = plt.figure(figsize=figsize, dpi=dpi)
-    ax = fig.add_subplot(1, 1, 1)
+    if fig is None or ax is None:
+        fig = plt.figure(figsize=figsize, dpi=dpi)
+        ax = fig.add_subplot(1, 1, 1)
+        external_fig = False
+    else:
+        external_fig = True
 
     if fwhm > 0:
         sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
@@ -362,14 +396,25 @@ def aimage(
     if binsize != 1:
         image = block_reduce(image, binsize, np.nanmean, 0)
 
+    if rot90 != 0:
+        image = np.rot90(image, k=rot90)
     im = ax.imshow(image, cmap=cmap, norm=norm, origin="lower", extent=extent)
 
     if title is not None:
-        ax.set_title(title, loc=title_loc, fontsize=title_fontsize)
+        ax.set_title(str(title), loc=title_loc, fontsize=title_fontsize)
 
     if show_mask and mask is not None:
         _add_mask(
-            ax, mask, mask_plane_dict, binsize, mask_planes, mask_alpha, mask_fontsize, mask_loc, show_legend
+            ax,
+            mask,
+            mask_plane_dict,
+            binsize,
+            rot90,
+            mask_planes,
+            mask_alpha,
+            mask_fontsize,
+            mask_loc,
+            show_legend,
         )
 
     if show_cbar is None:
@@ -378,12 +423,10 @@ def aimage(
     if show_cbar and norm is not None:
         _ = colorbar(im, norm=norm)
 
-    if fname is not None:
-        plt.savefig(fname, dpi=dpi, bbox_inches="tight")
-    else:
-        plt.show()
+    if not external_fig:
+        if fname is not None:
+            plt.savefig(fname, dpi=dpi, bbox_inches="tight")
+        else:
+            plt.show()
 
-    if fname is not None:
-        plt.savefig(fname, dpi=dpi, bbox_inches="tight")
-    else:
-        plt.show()
+    return {"vmin": vmin, "vmax": vmax, "stretch": stretch}

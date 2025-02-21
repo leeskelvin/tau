@@ -31,7 +31,7 @@ line_length = 110
 
 [tool.pytest.ini_options]
 
-[tool.pydocstyle]
+[tool.lint.pydocstyle]
 convention = "numpy"
 # Our coding style does not require docstrings for magic methods (D105)
 # Our docstyle documents __init__ at the class level (D107)
@@ -45,7 +45,7 @@ add-ignore = ["D107", "D105", "D102", "D100", "D200", "D205", "D400"]
 exclude = [
     "__init__.py",
 ]
-ignore = [
+lint.ignore = [
     "N802",
     "N803",
     "N806",
@@ -63,22 +63,22 @@ ignore = [
     "D400",
 ]
 line-length = 110
-select = [
-    "E",  # pycodestyle
+lint.select = [
+    "E",  # lint.pycodestyle
     "F",  # pyflakes
     "N",  # pep8-naming
-    "W",  # pycodestyle
-    "D",  # pydocstyle
+    "W",  # lint.pycodestyle
+    "D",  # lint.pydocstyle
     "UP",  # pyupgrade
     "C4",  # comprehensions
 ]
 target-version = "py310"
-extend-select = [
+lint.extend-select = [
     "RUF100", # Warn about unused noqa
 ]
 
-[tool.ruff.pycodestyle]
+[tool.ruff.lint.pycodestyle]
 max-doc-length = 79
 
-[tool.ruff.pydocstyle]
+[tool.ruff.lint.pydocstyle]
 convention = "numpy"
