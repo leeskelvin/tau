@@ -3,8 +3,9 @@ Tools which manipulate visit-level imaging.
 """
 
 import logging
+from collections.abc import Iterable
 from math import ceil
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 from lsst.afw.cameraGeom import FOCAL_PLANE, Camera, Detector

@@ -7,11 +7,10 @@ The three images must be aligned and have the same pixel scale and size.
 For details, see : https://ui.adsabs.harvard.edu/abs/2004PASP..116..133L
 """
 
-from typing import Sequence
+from collections.abc import Sequence
 from warnings import catch_warnings, filterwarnings
 
 import numpy as np
-
 from astropy.visualization import BaseInterval, BaseStretch, ManualInterval, ZScaleInterval
 from astropy.visualization.stretch import _prepare
 

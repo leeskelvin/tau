@@ -5,11 +5,10 @@ Combine 3 images to produce properly-scaled RGB images with arbitrary scaling.
 The three images must be aligned and have the same pixel scale and size.
 """
 
-from typing import Sequence
+from collections.abc import Sequence
 from warnings import catch_warnings, filterwarnings
 
 import numpy as np
-
 from astropy.visualization import BaseInterval, BaseStretch, LinearStretch, ManualInterval
 
 _OUTPUT_IMAGE_FORMATS = [float, np.float64, np.uint8]
@@ -159,7 +158,7 @@ def make_rgb(
     output_dtype: type = np.uint8,
 ):
     """
-    Base class to return a Red/Green/Blue color image from 3 images using
+    Return a Red/Green/Blue color image from 3 images using
     a specified stretch and interval, for each band *independently*.
 
     The input images can be int or float, and in any range or bit-depth,
