@@ -89,8 +89,9 @@ def _parse_inputs(
     elif hasattr(image, "array"):
         image = image.array
 
-    if image.shape != mask.shape:
-        logger.warning(" The image and mask shapes do not match.")
+    if mask is not None:
+        if image.shape != mask.shape:
+            logger.warning(" The image and mask shapes do not match.")
 
     return image, mask, mask_plane_dict
 

@@ -402,7 +402,11 @@ class Visit:
             raise ValueError(
                 f"Detector {detector_id} not found in visit. Available detectors: {self.detector_ids}"
             )
-        exposure = self.butler.get(self.dataset_refs[detector_id])
+        try:
+            exposure = self.butler.get(self.dataset_refs[detector_id])
+        except FileNotFoundError:
+            logger.warning(f"Dataset not found for detector {detector_id}.")
+            return None
         if not isinstance(exposure, ExposureF):
             if camera is None:
                 camera = self.camera
