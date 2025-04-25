@@ -79,6 +79,8 @@ def _parse_inputs(
         mask = mask.image.array
     elif hasattr(mask, "getImage"):
         mask = mask.getImage().array
+    elif hasattr(mask, "getImageF"):
+        mask = mask.getImageF().array
     elif hasattr(mask, "array"):
         mask = mask.array
     # image
@@ -86,6 +88,8 @@ def _parse_inputs(
         image = image.image.array
     elif hasattr(image, "getImage"):
         image = image.getImage().array
+    elif hasattr(image, "getImageF"):
+        image = image.getImageF().array
     elif hasattr(image, "array"):
         image = image.array
 
