@@ -314,6 +314,7 @@ def colorbar(
     # Generate unique tick labels with increasing precision as necessary
     tick_values = cbar.get_ticks()
     cbar.set_ticks(tick_values)
+    cbar.ax.minorticks_off()
     for decimals in range(0, 7):
         formatted_tick_values = [f"{tick_value:.{decimals}f}" for tick_value in tick_values]
         if len(set(formatted_tick_values)) == len(tick_values):
