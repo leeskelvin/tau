@@ -24,11 +24,13 @@ from astropy.visualization import (
     SinhStretch,
     ZScaleInterval,
 )
+from astropy.wcs import WCS
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable
 from matplotlib.colorbar import Colorbar
 from matplotlib.colors import Normalize
 from matplotlib.figure import Figure
+from matplotlib.gridspec import SubplotSpec
 from matplotlib.patches import Patch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.axes_grid1.axes_size import Fixed
@@ -42,8 +44,8 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_inputs(
-    image: Any, mask: Any = None, mask_plane_dict: dict | None = None
-) -> tuple[np.ndarray, np.ndarray | None, dict | None]:
+    image: Any, mask: Any = None, mask_plane_dict: dict | None = None, wcs: Any | None = None
+) -> tuple[np.ndarray, np.ndarray | None, dict | None, Any | None]:
     """Parse an image to a numpy array.
 
     Parameters
@@ -57,6 +59,8 @@ def _parse_inputs(
         The mask data, if available.
     mask_plane_dict : dict | None, optional
         The mask plane dictionary, if available.
+    wcs : Any | None, optional
+        The WCS information, if available.
 
     Returns
     -------
@@ -66,7 +70,20 @@ def _parse_inputs(
         The mask data as a numpy array, if available.
     mask_plane_dict : dict | None
         The mask plane dictionary, if available.
+    wcs : Any | None
+        The WCS information in astropy format, if available.
     """
+    # WCS
+    if wcs is None:
+        if hasattr(image, "wcs"):
+            wcs = WCS(image.wcs.getFitsMetadata().toDict())
+        elif hasattr(image, "getWcs"):
+            wcs = WCS(image.getWcs().getFitsMetadata().toDict())
+    else:
+        if hasattr(wcs, "getFitsMetadata"):
+            wcs = WCS(wcs.getFitsMetadata().toDict())
+        elif not isinstance(wcs, WCS):
+            raise TypeError("WCS must be an instance of lsst.afw.geom.SkyWcs, astropy.wcs.WCS, or None.")
     # mask_plane_dict
     if mask_plane_dict is None and hasattr(image, "mask"):
         mask_plane_dict = image.mask.getMaskPlaneDict()
@@ -97,7 +114,7 @@ def _parse_inputs(
         if image.shape != mask.shape:
             logger.warning(" The image and mask shapes do not match.")
 
-    return image, mask, mask_plane_dict
+    return image, mask, mask_plane_dict, wcs
 
 
 def _get_vmin_vmax(
@@ -192,6 +209,7 @@ def _add_mask(
     ax: Axes,
     mask: np.ndarray,
     mask_plane_dict: dict | None,
+    extent: tuple[float, float, float, float],
     binsize: int,
     rot90: int,
     mask_planes: str | list[str] | None,
@@ -211,6 +229,8 @@ def _add_mask(
     mask_plane_dict : dict | None
         The mask plane dictionary, associating the mask plane names (keys)
         with their binary bits (values).
+    extent : tuple[float, float, float, float]
+        The extent of the image in the format (xmin, xmax, ymin, ymax).
     binsize : int
         The bin size to apply to the mask.
     mask_planes : str | list[str] | None
@@ -224,9 +244,6 @@ def _add_mask(
     show_legend : bool
         Show the mask legend, if available.
     """
-    rows, cols = mask.shape
-    extent = (0, cols, 0, rows) if rot90 in [0, 2] else (0, rows, 0, cols)
-
     if mask_plane_dict is None:
         mask_plane_bits = np.arange(int(np.log2(np.max(mask))) + 1)
         mask_plane_dict = {f"{mask_plane_bit}": mask_plane_bit for mask_plane_bit in mask_plane_bits}
@@ -304,7 +321,8 @@ def colorbar(
     ax = mappable.axes
     fig = ax.figure
     divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size=Fixed(fixed_size), pad=pad)
+    cax = divider.append_axes("right", size=Fixed(fixed_size), pad=pad, axes_class=Axes)
+    breakpoint()
     cbar = fig.colorbar(mappable, cax=cax)
     plt.sca(last_axes)
 
@@ -329,9 +347,14 @@ def aimage(
     image: Any,
     mask: Any = None,
     mask_plane_dict: dict | None = None,
+    wcs: Any | None = None,
     # image display
     interval: str | BaseInterval = "percentile",
     stretch: str | BaseStretch = "linear",
+    xmin: None | int | float = None,
+    xmax: None | int | float = None,
+    ymin: None | int | float = None,
+    ymax: None | int | float = None,
     vmin: None | int | float = None,
     vmax: None | int | float = None,
     pc: int | float | Sequence[int | float] = 100,
@@ -348,6 +371,10 @@ def aimage(
     mask_alpha: float = 1.0,
     mask_fontsize: str | float = "xx-small",
     mask_loc: str | int = "upper left",
+    # grid
+    grid_color: str = "white",
+    grid_linestyle: str = "solid",
+    grid_linewidth: float = 1,
     # title
     title: object = None,
     title_fontsize: str | float = "x-small",
@@ -358,19 +385,35 @@ def aimage(
     fig: Figure | None = None,
     ax: Axes | None = None,
     fname: str | None = None,
+    # WCS
+    decimal: bool = True,
+    show_decimal_unit: bool = True,
     # show toggles
+    show_axes: bool = True,
+    show_minor_ticks: bool = False,
     show_cbar: bool | None = None,
     show_mask: bool = False,
+    show_grid: bool = False,
+    show_wcs: bool = False,
     show_legend: bool = True,
 ):
     """Display an image with optional mask overlay."""
-    image, mask, mask_plane_dict = _parse_inputs(image, mask, mask_plane_dict)
+    image, mask, mask_plane_dict, wcs = _parse_inputs(image, mask, mask_plane_dict, wcs)
     assert isinstance(image, np.ndarray)
     assert mask is None or isinstance(mask, np.ndarray)
     assert mask_plane_dict is None or isinstance(mask_plane_dict, dict)
+    assert wcs is None or isinstance(wcs, WCS)
 
-    rows, cols = image.shape
-    extent = (0, cols, 0, rows) if rot90 in [0, 2] else (0, rows, 0, cols)
+    xslice = slice(0 if xmin is None else int(xmin), image.shape[1] if xmax is None else int(xmax))
+    yslice = slice(0 if ymin is None else int(ymin), image.shape[0] if ymax is None else int(ymax))
+    xyslice = (yslice, xslice) if rot90 in [0, 2] else (xslice, yslice)
+    image = image[xyslice]
+    if mask is not None:
+        mask = mask[xyslice]
+    extent = (xyslice[1].start, xyslice[1].stop, xyslice[0].start, xyslice[0].stop)
+
+    # rows, cols = image.shape
+    # extent = (0, cols, 0, rows) if rot90 in [0, 2] else (0, rows, 0, cols)
 
     if vmin is None or vmax is None:
         vmin0, vmax0 = _get_vmin_vmax(image, interval, pc, contrast)
@@ -387,9 +430,14 @@ def aimage(
 
     if fig is None or ax is None:
         fig = plt.figure(figsize=figsize, dpi=dpi)
-        ax = fig.add_subplot(1, 1, 1)
+        ax = fig.add_subplot(1, 1, 1, projection=wcs if show_wcs else None)
         external_fig = False
     else:
+        if show_wcs:
+            subplotspec = ax.get_subplotspec()
+            if isinstance(subplotspec, SubplotSpec):
+                fig.delaxes(ax)
+                ax = fig.add_subplot(subplotspec, projection=wcs)
         external_fig = True
 
     if fwhm > 0:
@@ -406,6 +454,24 @@ def aimage(
         image = np.rot90(image, k=rot90)
     im = ax.imshow(image, cmap=cmap, norm=norm, origin="lower", extent=extent)
 
+    if show_grid:
+        ax.grid(color=grid_color, linestyle=grid_linestyle, linewidth=grid_linewidth)
+
+    try:
+        ax.coords[0].set_format_unit("degree", decimal=decimal, show_decimal_unit=show_decimal_unit)
+        ax.coords[1].set_format_unit("degree", decimal=decimal, show_decimal_unit=show_decimal_unit)
+        ax.coords[0].set_ticks_position("bl")
+        ax.coords[1].set_ticks_position("bl")
+    except AttributeError:
+        pass
+
+    if show_minor_ticks:
+        try:
+            ax.coords[0].display_minor_ticks(True)
+            ax.coords[1].display_minor_ticks(True)
+        except AttributeError:
+            ax.minorticks_on()
+
     if title is not None:
         ax.set_title(str(title), loc=title_loc, fontsize=title_fontsize)
 
@@ -414,6 +480,7 @@ def aimage(
             ax,
             mask,
             mask_plane_dict,
+            extent,
             binsize,
             rot90,
             mask_planes,
@@ -422,6 +489,9 @@ def aimage(
             mask_loc,
             show_legend,
         )
+
+    if not show_axes:
+        ax.set_axis_off()
 
     if show_cbar is None:
         show_cbar = True if image.ndim == 2 else False
