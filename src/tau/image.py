@@ -355,12 +355,12 @@ def aimage(
     mask_plane_dict: dict | None = None,
     wcs: Any | None = None,
     # image display
-    interval: str | BaseInterval = "percentile",
-    stretch: str | BaseStretch = "linear",
     xmin: None | int | float = None,
     xmax: None | int | float = None,
     ymin: None | int | float = None,
     ymax: None | int | float = None,
+    interval: str | BaseInterval = "percentile",
+    stretch: str | BaseStretch = "linear",
     vmin: None | int | float = None,
     vmax: None | int | float = None,
     pc: int | float | Sequence[int | float] = 100,
@@ -418,9 +418,6 @@ def aimage(
     if mask is not None:
         mask = mask[xyslice]
     extent = (xyslice[1].start, xyslice[1].stop, xyslice[0].start, xyslice[0].stop)
-
-    # rows, cols = image.shape
-    # extent = (0, cols, 0, rows) if rot90 in [0, 2] else (0, rows, 0, cols)
 
     if vmin is None or vmax is None:
         vmin0, vmax0 = _get_vmin_vmax(image, interval, pc, contrast)
