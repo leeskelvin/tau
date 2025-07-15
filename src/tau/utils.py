@@ -5,15 +5,17 @@ Utilities for introspecting astronomy data.
 import logging
 import re
 import sys
+import textwrap
 import time
 
 # from collections.abc import Mapping
 import yaml
+from lsst.daf.butler import DatasetRef
 from lsst.pipe.base import Pipeline
 from lsst.source.injection.utils._make_injection_pipeline import _parse_config_override
 from lsst.utils.packages import getEnvironmentPackages
 
-__all__ = ["print_session_info", "dump_config"]
+__all__ = ["print_session_info", "ref_to_title", "convert_selection_sets", "dump_config"]
 
 
 def print_session_info():
@@ -31,6 +33,32 @@ def print_session_info():
     dev_packages = {"lsst_distrib": packages["lsst_distrib"]}
     dev_packages.update({k: v.split("@")[0] for k, v in packages.items() if "LOCAL" in v})
     print("## Science Pipelines\n\n" + "\n".join(f"{k:<20} {v}" for k, v in dev_packages.items()))
+
+
+def ref_to_title(ref: DatasetRef, exclude: str | list[str] = "", delimiter: str = "\n", wrap=80) -> str:
+    """Convert a DatasetRef to a title string for a plot.
+
+    Parameters
+    ----------
+    ref : `DatasetRef`
+        The DatasetRef to convert.
+    exclude : `str` | `list`[`str`], optional
+        Dimensions in the data ID to exclude.
+    delimiter : `str`, optional
+        The delimiter to use between the different parts of the title.
+
+    Returns
+    -------
+    title : `str`
+        The title string.
+    """
+    data_id = {k: v for k, v in ref.dataId.required.items() if k not in exclude}
+    data_id_str = ", ".join([f"{k}: {repr(v)}" for k, v in data_id.items()])
+    parts = [ref.datasetType.name, data_id_str, ref.run]
+    wrapped_parts = [
+        textwrap.fill(p, width=wrap, break_long_words=False, break_on_hyphens=False) for p in parts
+    ]
+    return delimiter.join(wrapped_parts)
 
 
 # def walk_and_report(obj, path="root"):
@@ -100,6 +128,10 @@ def dump_config(
     # Instantiate logger.
     logger = logging.getLogger(__name__)
     logger.setLevel(log_level)
+    logger.propagate = False
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    logger.addHandler(handler)
 
     # Load the pipeline and apply config overrides, if supplied.
     if isinstance(pipeline, str):

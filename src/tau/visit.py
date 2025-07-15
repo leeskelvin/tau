@@ -3,7 +3,9 @@ Tools which manipulate visit-level imaging.
 """
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Sequence
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from math import ceil
 from typing import Any
 
@@ -15,10 +17,25 @@ from lsst.afw.image import LOCAL, ExposureF, MaskedImageF, makeExposure
 from lsst.afw.math import binImage, rotateImageBy90
 from lsst.daf.butler import Butler, DataId, DatasetRef, DatasetType
 from lsst.geom import Box2D, Box2I, Point2I
+from lsst.pex.exceptions import LengthError
 
-__all__ = ["make_exposure", "bin_exposure", "make_visit_mosaic", "Visit"]
+from .utils import ref_to_title
+
+__all__ = [
+    "make_exposure",
+    "bin_exposure",
+    "get_exposure_from_ref",
+    "get_exposures_from_refs",
+    "make_visit_mosaic",
+    "Visit",
+]
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.propagate = False
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+logger.addHandler(handler)
 
 
 def make_exposure(data: Any, detector: Detector | None = None) -> ExposureF:
@@ -91,6 +108,92 @@ def bin_exposure(exposure: ExposureF, binsize: int) -> ExposureF:
     return binned_exposure
 
 
+def get_exposure_from_ref(
+    dataset_ref: DatasetRef, butler: Butler, binsize: int = 1, camera: Camera | None = None
+) -> ExposureF:
+    """Get the exposure for a given dataset reference, optionally binned.
+
+    Parameters
+    ----------
+    butler : `~lsst.daf.butler.Butler`
+        Butler to use to retrieve the exposure.
+    dataset_ref : `~lsst.daf.butler.DatasetRef`
+        Dataset reference for the exposure to retrieve.
+    binsize : int, optional
+        Factor by which the exposure will be binned (default, no binning).
+    camera : `~lsst.afw.cameraGeom.Camera`, optional
+        Camera to use. Only used to supply detector information when
+        the dataset is not an ExposureF or when confirming existing binning.
+
+    Returns
+    -------
+    exposure : `~lsst.afw.image.ExposureF`
+        Exposure for the requested dataset ref, optionally binned.
+    """
+    try:
+        exposure = butler.get(dataset_ref)
+    except FileNotFoundError:
+        logger.error(f"File not found for {dataset_ref}.")
+    detector_id = dict(dataset_ref.dataId.mapping).get("detector", None)
+    if not isinstance(exposure, ExposureF):
+        if detector_id:
+            assert camera is not None and isinstance(camera, Camera)
+            exposure = make_exposure(exposure, camera[detector_id])
+        else:
+            exposure = make_exposure(exposure)
+    if binsize != 1:
+        if detector_id:
+            assert camera is not None and isinstance(camera, Camera)
+            camera_y, camera_x = camera[detector_id].getBBox().getDimensions()
+            detector_y, detector_x = exposure.getBBox().getDimensions()
+            native_binsize = int(np.round(np.mean([camera_x / detector_x, camera_y / detector_y])))
+            if native_binsize != 1:
+                logger.info(
+                    f"Using already binned image binsize of {native_binsize} for detector {detector_id}."
+                )
+                return exposure
+        return bin_exposure(exposure, binsize)
+    else:
+        return exposure
+
+
+def get_exposures_from_refs(
+    dataset_refs: Sequence[DatasetRef],
+    butler: Butler,
+    binsize: int = 1,
+    camera: Camera | None = None,
+    max_workers: int = 8,
+) -> list[ExposureF]:
+    """Get exposures for a list of dataset references, optionally binned.
+
+    Parameters
+    ----------
+    butler : `~lsst.daf.butler.Butler`
+        Butler to use to retrieve the exposures.
+    dataset_refs : Sequence[`~lsst.daf.butler.DatasetRef`]
+        Dataset references for the exposures to retrieve.
+    binsize : int, optional
+        Factor by which the exposures will be binned (default, no binning).
+    camera : `~lsst.afw.cameraGeom.Camera`, optional
+        Camera to use. Only used to supply detector information when
+        the dataset is not an ExposureF or when confirming existing binning.
+
+    Returns
+    -------
+    exposures : list[`~lsst.afw.image.ExposureF`]
+        List of exposures for the requested dataset refs, optionally binned.
+    """
+    if max_workers <= 1:
+        return [get_exposure_from_ref(butler, dataset_ref, binsize, camera) for dataset_ref in dataset_refs]
+    else:
+        get_exposure_from_ref_partial = partial(
+            get_exposure_from_ref, butler=butler, binsize=binsize, camera=camera
+        )
+        with ProcessPoolExecutor(max_workers=max(len(dataset_refs), max_workers)) as executor:
+            exposures = list(executor.map(get_exposure_from_ref_partial, dataset_refs))
+        return exposures
+
+
 def make_visit_mosaic(
     exposures: list[ExposureF],
     camera: Camera,
@@ -104,15 +207,15 @@ def make_visit_mosaic(
     Parameters
     ----------
     exposures : list[~lsst.afw.image.ExposureF]
-        The exposures to use, already binned.
+        Exposures to use, already binned if desired.
     camera : `~lsst.afw.cameraGeom.Camera`
-        The camera to use.
+        Camera to use.
     buffer : int, optional
-        The buffer size in pixels around the camera image.
+        Buffer size in pixels around the camera image.
     background_value : float, optional
-        The background value to use.
+        Background value to use.
     background_masks : list[str], optional
-        The background masks to use.
+        Background masks to use.
     crop : bool, optional
         Crop the camera image to the bounding box of the detectors?
 
@@ -173,9 +276,17 @@ def make_visit_mosaic(
         detectorMI_image.getArray()[bad] = background_value
         # Map detector image to camera image
         camera_detectorMI = cameraMI.Factory(cameraMI, camera_detector_bbox, LOCAL)
-        camera_detectorMI.setImage(detectorMI_image)
-        camera_detectorMI.setMask(detectorMI_mask)
-        camera_detectorMI.setVariance(detectorMI_variance)
+        try:
+            camera_detectorMI.setImage(detectorMI_image)
+            camera_detectorMI.setMask(detectorMI_mask)
+            camera_detectorMI.setVariance(detectorMI_variance)
+        except LengthError:
+            logger.warning(
+                f"Data for detector {detector_id} does not fit in the detector-in-camera BBox dimensions "
+                f"(data: {detectorMI_image.getBBox().getDimensions()}, "
+                f"camera: {camera_detector_bbox.getDimensions()}), skipping."
+            )
+            continue
 
     return cameraMI
 
@@ -187,7 +298,7 @@ class Visit:
         self,
         butler: Butler,
         dataset_type: str | DatasetType = "calexp",
-        collections: str | Iterable[str] | None = None,
+        collections: str | Sequence[str] | None = None,
         **kwargs: Any,
     ):
         """Initialize the Visit class.
@@ -198,7 +309,7 @@ class Visit:
             The butler to use.
         dataset_type : str | DatasetType, optional
             The dataset type to query.
-        collections : str | iterable[str], optional
+        collections : str | Sequence[str], optional
             The collections to query. If None, all collections are queried.
         kwargs : Any
             Additional keyword arguments to pass to the butler.
@@ -235,6 +346,7 @@ class Visit:
             self.ra = None
             self.dec = None
         self.summary = self.get_summary(self.data_id, self.dataset_type, self.run)
+        self.title = ref_to_title(self._dataset_refs[0], exclude=["detector"])
         self.camera = self._get_camera()
 
     def __str__(self) -> str:
@@ -385,11 +497,11 @@ class Visit:
         Parameters
         ----------
         detector_id : int
-            The detector number ID.
+            Detector number ID.
         binsize : int, optional
             Factor by which the exposure will be binned (default, no binning).
         camera : `~lsst.afw.cameraGeom.Camera`, optional
-            The camera to use. Only used to supply detector information when
+            Camera to use. Only used to supply detector information when
             the dataset is not an ExposureF. If None, the camera attribute
             of the visit is used.
 
@@ -398,30 +510,40 @@ class Visit:
         exposure : `~lsst.afw.image.ExposureF`
             The exposure for a given detector.
         """
+        if camera is None:
+            camera = self.camera
         if detector_id not in self.detector_ids:
-            raise ValueError(
+            logger.error(
                 f"Detector {detector_id} not found in visit. Available detectors: {self.detector_ids}"
             )
+            return None
         try:
             exposure = self.butler.get(self.dataset_refs[detector_id])
         except FileNotFoundError:
-            logger.warning(f"Dataset not found for detector {detector_id}.")
+            logger.error(f"Dataset not found for detector {detector_id}.")
             return None
         if not isinstance(exposure, ExposureF):
-            if camera is None:
-                camera = self.camera
             assert camera is not None and isinstance(camera, Camera)
             exposure = make_exposure(exposure, camera[detector_id])
         if binsize != 1:
+            assert camera is not None and isinstance(camera, Camera)
+            camera_y, camera_x = camera[detector_id].getBBox().getDimensions()
+            detector_y, detector_x = exposure.getBBox().getDimensions()
+            native_binsize = int(np.round(np.mean([camera_x / detector_x, camera_y / detector_y])))
+            if native_binsize != 1:
+                logger.info(
+                    f"Using already binned image binsize of {native_binsize} for detector {detector_id}."
+                )
+                return exposure
             return bin_exposure(exposure, binsize)
         else:
             return exposure
 
-    def make_mosaic(
+    def get_mosaic(
         self,
         binsize: int = 8,
         camera: Camera = None,
-        detector_ids: Iterable[int] | None = None,
+        detector_ids: Sequence[int] | None = None,
         buffer: int = 10,
         background_value: float = np.nan,
         background_masks: list[str] = ["NO_DATA"],
@@ -434,17 +556,17 @@ class Visit:
         binsize : int, optional
             Factor by which the exposure will be binned.
         camera : `~lsst.afw.cameraGeom.Camera`, optional
-            The camera to use. If None, an attempt is made to get the camera
+            Camera to use. If None, an attempt is made to get the camera
             from the butler using the visit data ID and collection.
-        detector_ids : iterable[int] | None, optional
-            The detectors to include in the mosaic.
+        detector_ids : Sequence[int] | None, optional
+            Detectors to include in the mosaic.
             If None, all detectors in the visit are included.
         buffer : int, optional
-            The buffer size in pixels around the camera image.
+            Buffer size in pixels around the camera image.
         background_value : float, optional
-            The background value to use.
+            Background value to use.
         background_masks : list[str], optional
-            The background masks to use.
+            Background masks to use.
         crop : bool, optional
             Crop the camera image to the bounding box of the detectors?
 
@@ -460,19 +582,15 @@ class Visit:
                 camera = self.camera
         if not detector_ids:
             detector_ids = self.detector_ids
-        exposures = [self.get_exposure(detector_id) for detector_id in detector_ids]
-        camera_y, camera_x = camera[0].getBBox().getDimensions()
-        detector_y, detector_x = exposures[0].getBBox().getDimensions()
-        native_binsize = int(np.round(np.mean([camera_x / detector_x, camera_y / detector_y])))
-        if native_binsize != 1:
-            logger.warning(f" Using already binned image binsize of {native_binsize} for visit mosaic.")
-        else:
-            binned_exposures = []
-            for exposure in exposures:
-                binned_exposures.append(bin_exposure(exposure, binsize))
-            exposures = binned_exposures
+
+        binned_exposures = []
+        for detector_id in detector_ids:
+            binned_exposure = self.get_exposure(detector_id, binsize, camera)
+            if binned_exposure is not None:
+                binned_exposures.append(binned_exposure)
+
         return make_visit_mosaic(
-            exposures=exposures,
+            exposures=binned_exposures,
             camera=camera,
             buffer=buffer,
             background_value=background_value,

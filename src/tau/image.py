@@ -41,6 +41,11 @@ __all__ = ["colorbar", "aimage"]
 
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.propagate = False
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+logger.addHandler(handler)
 
 
 def _parse_inputs(
@@ -112,7 +117,7 @@ def _parse_inputs(
 
     if mask is not None:
         if image.shape != mask.shape:
-            logger.warning(" The image and mask shapes do not match.")
+            logger.warning("The image and mask shapes do not match.")
 
     return image, mask, mask_plane_dict, wcs
 
@@ -276,6 +281,7 @@ def _add_mask(
         origin="lower",
         extent=extent,
         interpolation="nearest",
+        rasterized=True,
     )
 
     if show_legend:
@@ -382,6 +388,7 @@ def aimage(
     # figure options
     figsize: tuple[float, float] = (6, 6),
     dpi: int = 300,
+    facecolor: str = "#ffffee",
     fig: Figure | None = None,
     ax: Axes | None = None,
     fname: str | None = None,
@@ -425,12 +432,12 @@ def aimage(
         stretch = _get_stretch(stretch, a, slope, intercept, image, vmin, vmax)
     assert isinstance(stretch, BaseStretch)
 
-    norm = ImageNormalize(vmin=vmin, vmax=vmax, stretch=stretch, clip=True)  # type: ignore
+    norm = ImageNormalize(vmin=vmin, vmax=vmax, stretch=stretch, clip=False)  # type: ignore
     assert isinstance(norm, Normalize)
 
     if fig is None or ax is None:
         fig = plt.figure(figsize=figsize, dpi=dpi)
-        ax = fig.add_subplot(1, 1, 1, projection=wcs if show_wcs else None)
+        ax = fig.add_subplot(1, 1, 1, facecolor=facecolor, projection=wcs if show_wcs else None)
         external_fig = False
     else:
         if show_wcs:
@@ -452,7 +459,14 @@ def aimage(
 
     if rot90 != 0:
         image = np.rot90(image, k=rot90)
-    im = ax.imshow(image, cmap=cmap, norm=norm, origin="lower", extent=extent)
+    im = ax.imshow(
+        np.clip(image, vmin, vmax),
+        cmap=cmap,
+        norm=norm,
+        origin="lower",
+        extent=extent,
+        rasterized=True,
+    )
 
     if show_grid:
         ax.grid(color=grid_color, linestyle=grid_linestyle, linewidth=grid_linewidth)
@@ -504,5 +518,6 @@ def aimage(
             plt.savefig(fname, dpi=dpi, bbox_inches="tight")
         else:
             plt.show()
+        plt.close(fig)
 
     return {"vmin": vmin, "vmax": vmax, "stretch": stretch}
