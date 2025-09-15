@@ -89,7 +89,6 @@ def _parse_inputs(
             try:
                 wcs = WCS(wcs.getFitsMetadata().toDict())
             except RuntimeError:
-                logger.warning("Failed to parse WCS from fits metadata.")
                 wcs = None
         else:
             raise TypeError("WCS must be an instance of lsst.afw.geom.SkyWcs, astropy.wcs.WCS, or None.")
@@ -435,6 +434,9 @@ def aimage(
 
     norm = ImageNormalize(vmin=vmin, vmax=vmax, stretch=stretch, clip=False)  # type: ignore
     assert isinstance(norm, Normalize)
+
+    if show_wcs and not isinstance(wcs, WCS):
+        raise ValueError("No WCS information available to show WCS.")
 
     if fig is None or ax is None:
         fig = plt.figure(figsize=figsize, dpi=dpi)
