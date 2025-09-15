@@ -81,13 +81,17 @@ def _parse_inputs(
     # WCS
     if wcs is None:
         if hasattr(image, "wcs"):
-            wcs = WCS(image.wcs.getFitsMetadata().toDict())
+            wcs = image.wcs
         elif hasattr(image, "getWcs"):
-            wcs = WCS(image.getWcs().getFitsMetadata().toDict())
-    else:
+            wcs = image.getWcs()
+    if wcs is not None and not isinstance(wcs, WCS):
         if hasattr(wcs, "getFitsMetadata"):
-            wcs = WCS(wcs.getFitsMetadata().toDict())
-        elif not isinstance(wcs, WCS):
+            try:
+                wcs = WCS(wcs.getFitsMetadata().toDict())
+            except RuntimeError:
+                logger.warning("Failed to parse WCS from fits metadata.")
+                wcs = None
+        else:
             raise TypeError("WCS must be an instance of lsst.afw.geom.SkyWcs, astropy.wcs.WCS, or None.")
     # mask_plane_dict
     if mask_plane_dict is None and hasattr(image, "mask"):
