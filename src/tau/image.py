@@ -126,7 +126,11 @@ def _parse_inputs(
 
 
 def _get_vmin_vmax(
-    image: np.ndarray, interval: str | BaseInterval, pc: int | float | Sequence[int | float], contrast: float
+    image: np.ndarray,
+    interval: str | BaseInterval,
+    pc: int | float | Sequence[int | float],
+    sentinel: float,
+    contrast: float,
 ):
     """Get vmin and vmax values for an image based on the interval.
 
@@ -138,6 +142,8 @@ def _get_vmin_vmax(
         The interval to use for vmin and vmax calculation.
     pc : int | float | Sequence[int | float]
         The percentile(s) to use for the interval.
+    sentinel : float
+        The sentinel value to ignore in the image.
     contrast : float
         The contrast to use for the ZScale interval.
 
@@ -158,7 +164,8 @@ def _get_vmin_vmax(
         case _:
             if not isinstance(interval, BaseInterval):
                 raise ValueError("interval must be a known string or a BaseInterval instance.")
-    vmin, vmax = interval.get_limits(image)
+    masked_image = np.ma.masked_where(image == sentinel, image)
+    vmin, vmax = interval.get_limits(masked_image)
     return vmin, vmax
 
 
@@ -367,6 +374,7 @@ def aimage(
     vmin: None | int | float = None,
     vmax: None | int | float = None,
     pc: int | float | Sequence[int | float] = 100,
+    sentinel: float = 0.0,
     contrast: float = 0.25,
     a: float = 2.0,
     slope: float = 1.0,
@@ -423,7 +431,7 @@ def aimage(
     extent = (xyslice[1].start, xyslice[1].stop, xyslice[0].start, xyslice[0].stop)
 
     if vmin is None or vmax is None:
-        vmin0, vmax0 = _get_vmin_vmax(image, interval, pc, contrast)
+        vmin0, vmax0 = _get_vmin_vmax(image, interval, pc, sentinel, contrast)
         vmin = vmin0 if vmin is None else vmin
         vmax = vmax0 if vmax is None else vmax
     assert vmin is not None and vmax is not None
