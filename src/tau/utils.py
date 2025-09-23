@@ -35,13 +35,17 @@ def print_session_info():
     print("## Science Pipelines\n\n" + "\n".join(f"{k:<20} {v}" for k, v in dev_packages.items()))
 
 
-def ref_to_title(ref: DatasetRef, exclude: str | list[str] = "", delimiter: str = "\n", wrap=80) -> str:
+def ref_to_title(
+    ref: DatasetRef, modifier: str = "", exclude: str | list[str] = "", delimiter: str = "\n", wrap=80
+) -> str:
     """Convert a DatasetRef to a title string for a plot.
 
     Parameters
     ----------
     ref : `DatasetRef`
         The DatasetRef to convert.
+    modifier : `str`, optional
+        A modifier string to append to the title.
     exclude : `str` | `list`[`str`], optional
         Dimensions in the data ID to exclude.
     delimiter : `str`, optional
@@ -54,7 +58,7 @@ def ref_to_title(ref: DatasetRef, exclude: str | list[str] = "", delimiter: str 
     """
     data_id = {k: v for k, v in ref.dataId.required.items() if k not in exclude}
     data_id_str = ", ".join([f"{k}: {repr(v)}" for k, v in data_id.items()])
-    parts = [ref.datasetType.name, data_id_str, ref.run]
+    parts = [ref.datasetType.name + modifier, data_id_str, ref.run]
     wrapped_parts = [
         textwrap.fill(p, width=wrap, break_long_words=False, break_on_hyphens=False) for p in parts
     ]
