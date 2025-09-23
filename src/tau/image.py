@@ -394,7 +394,7 @@ def aimage(
     grid_linewidth: float = 1,
     # title
     title: object = None,
-    title_fontsize: str | float = "x-small",
+    title_fontsize: str | float = "xx-small",
     title_loc: Literal["left", "center", "right"] = "left",
     # figure options
     figsize: tuple[float, float] = (6, 6),
