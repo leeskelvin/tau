@@ -141,6 +141,9 @@ def get_exposure_from_ref(
             exposure = make_exposure(exposure, camera[detector_id])
         else:
             exposure = make_exposure(exposure)
+    if not exposure.getDetector():
+        assert camera is not None and isinstance(camera, Camera)
+        exposure.setDetector(camera[detector_id])
     if binsize != 1:
         if detector_id:
             assert camera is not None and isinstance(camera, Camera)
