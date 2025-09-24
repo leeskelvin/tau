@@ -480,13 +480,18 @@ class Visit:
             dataset_type = dataset_type.name
 
         match data_id:
+            case {"band": value}:
+                band_id = f"({value}-band)"
+            case _:
+                band_id = ""
+        match data_id:
             case {"visit": value}:
                 visit_id = f", visit {value}"
             case {"exposure": value}:
                 visit_id = f", exposure {value}"
             case _:
                 visit_id = ""
-        data_info = f"{data_id['instrument']} {dataset_type} ({data_id['band']}-band){visit_id}"
+        data_info = f"{data_id['instrument']} {dataset_type} {band_id}{visit_id}"
         run_info = f"run: {run}"
 
         return f"{data_info}\n{run_info}"
