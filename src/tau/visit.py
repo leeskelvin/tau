@@ -137,16 +137,16 @@ def get_exposure_from_ref(
         return None
     detector_id = dict(dataset_ref.dataId.mapping).get("detector", None)
     if not isinstance(exposure, ExposureF):
-        if detector_id:
+        if detector_id is not None:
             assert camera is not None and isinstance(camera, Camera)
             exposure = make_exposure(exposure, camera[detector_id])
         else:
             exposure = make_exposure(exposure)
-    if not exposure.getDetector() and detector_id:
+    if not exposure.getDetector() and detector_id is not None:
         assert camera is not None and isinstance(camera, Camera)
         exposure.setDetector(camera[detector_id])
     if binsize != 1:
-        if detector_id:
+        if detector_id is not None:
             assert camera is not None and isinstance(camera, Camera)
             camera_y, camera_x = camera[detector_id].getBBox().getDimensions()
             detector_y, detector_x = exposure.getBBox().getDimensions()
