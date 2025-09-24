@@ -133,7 +133,8 @@ def get_exposure_from_ref(
     try:
         exposure = butler.get(dataset_ref)
     except FileNotFoundError:
-        logger.error(f"File not found for {dataset_ref}.")
+        logger.error(f"Dataset not found for {dataset_ref}.")
+        return None
     detector_id = dict(dataset_ref.dataId.mapping).get("detector", None)
     if not isinstance(exposure, ExposureF):
         if detector_id:
@@ -141,7 +142,7 @@ def get_exposure_from_ref(
             exposure = make_exposure(exposure, camera[detector_id])
         else:
             exposure = make_exposure(exposure)
-    if not exposure.getDetector():
+    if not exposure.getDetector() and detector_id:
         assert camera is not None and isinstance(camera, Camera)
         exposure.setDetector(camera[detector_id])
     if binsize != 1:
@@ -525,27 +526,8 @@ class Visit:
                 f"Detector {detector_id} not found in visit. Available detectors: {self.detector_ids}"
             )
             return None
-        try:
-            exposure = self.butler.get(self.dataset_refs[detector_id])
-        except FileNotFoundError:
-            logger.error(f"Dataset not found for detector {detector_id}.")
-            return None
-        if not isinstance(exposure, ExposureF):
-            assert camera is not None and isinstance(camera, Camera)
-            exposure = make_exposure(exposure, camera[detector_id])
-        if binsize != 1:
-            assert camera is not None and isinstance(camera, Camera)
-            camera_y, camera_x = camera[detector_id].getBBox().getDimensions()
-            detector_y, detector_x = exposure.getBBox().getDimensions()
-            native_binsize = int(np.round(np.mean([camera_x / detector_x, camera_y / detector_y])))
-            if native_binsize != 1:
-                logger.info(
-                    f"Using already binned image binsize of {native_binsize} for detector {detector_id}."
-                )
-                return exposure
-            return bin_exposure(exposure, binsize)
-        else:
-            return exposure
+        exposure = get_exposure_from_ref(self.dataset_refs[detector_id], self.butler, binsize, camera)
+        return exposure
 
     def get_mosaic(
         self,
