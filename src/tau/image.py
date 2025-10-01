@@ -49,8 +49,12 @@ logger.addHandler(handler)
 
 
 def _parse_inputs(
-    image: Any, mask: Any = None, mask_plane_dict: dict | None = None, wcs: Any | None = None
-) -> tuple[np.ndarray, np.ndarray | None, dict | None, Any | None]:
+    image: Any,
+    mask: Any = None,
+    mask_plane_dict: dict | None = None,
+    wcs: Any | None = None,
+    origin: tuple[int | float, int | float] | None = None,
+) -> tuple[np.ndarray, np.ndarray | None, dict | None, Any | None, tuple[int | float, int | float]]:
     """Parse an image to a numpy array.
 
     Parameters
@@ -66,6 +70,9 @@ def _parse_inputs(
         The mask plane dictionary, if available.
     wcs : Any | None, optional
         The WCS information, if available.
+    origin : tuple[int | float, int | float] | None, optional
+        The origin of the image (x0, y0). If None, it is extracted from the
+        image if available, otherwise (0, 0) is used.
 
     Returns
     -------
@@ -77,7 +84,13 @@ def _parse_inputs(
         The mask plane dictionary, if available.
     wcs : Any | None
         The WCS information in astropy format, if available.
+    origin : tuple[int | float, int | float]
+        The origin of the image (x0, y0).
     """
+    # origin
+    if origin is None:
+        bbox = getattr(image, "getBBox", lambda: None)()
+        origin = tuple(bbox.getBegin()) if bbox is not None else (0, 0)
     # WCS
     if wcs is None:
         if hasattr(image, "wcs"):
@@ -122,7 +135,62 @@ def _parse_inputs(
         if image.shape != mask.shape:
             logger.warning("The image and mask shapes do not match.")
 
-    return image, mask, mask_plane_dict, wcs
+    return image, mask, mask_plane_dict, wcs, origin
+
+
+def _crop_data(
+    image: Any,
+    mask: Any,
+    xmin: None | int | float = None,
+    xmax: None | int | float = None,
+    ymin: None | int | float = None,
+    ymax: None | int | float = None,
+    rot90: int = 0,
+    origin: tuple[int | float, int | float] = (0, 0),
+) -> tuple[np.ndarray, np.ndarray | None, tuple[float, float, float, float]]:
+    """Crop an image and mask to the specified limits.
+
+    Parameters
+    ----------
+    image : Any
+        The image data.
+    mask : Any
+        The mask data.
+    xmin : int | float | None, optional
+        The minimum x value to crop to. If None, no cropping is done.
+    xmax : int | float | None, optional
+        The maximum x value to crop to. If None, no cropping is done.
+    ymin : int | float | None, optional
+        The minimum y value to crop to. If None, no cropping is done.
+    ymax : int | float | None, optional
+        The maximum y value to crop to. If None, no cropping is done.
+    rot90 : int, optional
+        The number of times to rotate the image and mask by 90 degrees.
+    origin : tuple[int | float, int | float], optional
+        The origin of the image and mask.
+
+    Returns
+    -------
+    image : np.ndarray
+        The cropped image data.
+    mask : np.ndarray | None
+        The cropped mask data, if available.
+    extent : tuple[float, float, float, float]
+        The extent of the cropped image in the format (xmin, xmax, ymin, ymax).
+    """
+    x0, y0 = origin
+
+    xslice = slice(0 if xmin is None else int(xmin - x0), image.shape[1] if xmax is None else int(xmax - x0))
+    yslice = slice(0 if ymin is None else int(ymin - y0), image.shape[0] if ymax is None else int(ymax - y0))
+
+    xyslice = (yslice, xslice) if rot90 in [0, 2] else (xslice, yslice)
+    image = image[xyslice]
+    if mask is not None:
+        mask = mask[xyslice]
+
+    extent = (x0 + xyslice[1].start, x0 + xyslice[1].stop, y0 + xyslice[0].start, y0 + xyslice[0].stop)
+
+    return image, mask, extent
 
 
 def _get_vmin_vmax(
@@ -364,6 +432,7 @@ def aimage(
     mask: Any = None,
     mask_plane_dict: dict | None = None,
     wcs: Any | None = None,
+    origin: tuple[int | float, int | float] | None = None,
     # image display
     xmin: None | int | float = None,
     xmax: None | int | float = None,
@@ -397,7 +466,7 @@ def aimage(
     title_fontsize: str | float = "xx-small",
     title_loc: Literal["left", "center", "right"] = "left",
     # figure options
-    figsize: tuple[float, float] = (6, 6),
+    figsize: tuple[int | float, int | float] = (6, 6),
     dpi: int = 300,
     facecolor: str = "#ffffee",
     fig: Figure | None = None,
@@ -416,19 +485,14 @@ def aimage(
     show_legend: bool = True,
 ):
     """Display an image with optional mask overlay."""
-    image, mask, mask_plane_dict, wcs = _parse_inputs(image, mask, mask_plane_dict, wcs)
+    image, mask, mask_plane_dict, wcs, origin = _parse_inputs(image, mask, mask_plane_dict, wcs, origin)
     assert isinstance(image, np.ndarray)
     assert mask is None or isinstance(mask, np.ndarray)
     assert mask_plane_dict is None or isinstance(mask_plane_dict, dict)
     assert wcs is None or isinstance(wcs, WCS)
+    assert isinstance(origin, tuple) and len(origin) == 2
 
-    xslice = slice(0 if xmin is None else int(xmin), image.shape[1] if xmax is None else int(xmax))
-    yslice = slice(0 if ymin is None else int(ymin), image.shape[0] if ymax is None else int(ymax))
-    xyslice = (yslice, xslice) if rot90 in [0, 2] else (xslice, yslice)
-    image = image[xyslice]
-    if mask is not None:
-        mask = mask[xyslice]
-    extent = (xyslice[1].start, xyslice[1].stop, xyslice[0].start, xyslice[0].stop)
+    image, mask, extent = _crop_data(image, mask, xmin, xmax, ymin, ymax, rot90, origin)
 
     if vmin is None or vmax is None:
         vmin0, vmax0 = _get_vmin_vmax(image, interval, pc, sentinel, contrast)
