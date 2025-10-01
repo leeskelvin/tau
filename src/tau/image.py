@@ -183,11 +183,23 @@ def _crop_data(
     xslice = slice(0 if xmin is None else int(xmin - x0), image.shape[1] if xmax is None else int(xmax - x0))
     yslice = slice(0 if ymin is None else int(ymin - y0), image.shape[0] if ymax is None else int(ymax - y0))
 
-    xyslice = (yslice, xslice) if rot90 in [0, 2] else (xslice, yslice)
-    image = image[xyslice]
+    image = image[(yslice, xslice)]
     if mask is not None:
-        mask = mask[xyslice]
+        mask = mask[(yslice, xslice)]
 
+    def _reverse_slice(s: slice) -> slice:
+        return slice(s.stop - 1, s.start - 1, -1)
+
+    if rot90 == 0:
+        xyslice = (yslice, xslice)
+    elif rot90 == 1:
+        xyslice = (_reverse_slice(xslice), yslice)
+    elif rot90 == 2:
+        xyslice = (_reverse_slice(yslice), _reverse_slice(xslice))
+    elif rot90 == 3:
+        xyslice = (xslice, _reverse_slice(yslice))
+    else:
+        raise ValueError("rot90 must be 0, 1, 2, or 3.")
     extent = (x0 + xyslice[1].start, x0 + xyslice[1].stop, y0 + xyslice[0].start, y0 + xyslice[0].stop)
 
     return image, mask, extent
