@@ -54,7 +54,8 @@ def _parse_inputs(
     mask_plane_dict: dict | None = None,
     wcs: Any | None = None,
     origin: tuple[int | float, int | float] | None = None,
-) -> tuple[np.ndarray, np.ndarray | None, dict | None, Any | None, tuple[int | float, int | float]]:
+    rot90: int = 0,
+) -> tuple[np.ndarray, np.ndarray | None, dict | None, Any | None, tuple[int | float, int | float], int]:
     """Parse an image to a numpy array.
 
     Parameters
@@ -73,6 +74,8 @@ def _parse_inputs(
     origin : tuple[int | float, int | float] | None, optional
         The origin of the image (x0, y0). If None, it is extracted from the
         image if available, otherwise (0, 0) is used.
+    rot90 : int, optional
+        The number of times to rotate the image and mask by 90 degrees.
 
     Returns
     -------
@@ -86,7 +89,11 @@ def _parse_inputs(
         The WCS information in astropy format, if available.
     origin : tuple[int | float, int | float]
         The origin of the image (x0, y0).
+    rot90 : int
+        The number of times the image and mask were rotated by 90 degrees.
     """
+    # 90 degree rotation
+    rot90 = rot90 % 4
     # origin
     if origin is None:
         bbox = getattr(image, "getBBox", lambda: None)()
@@ -105,6 +112,10 @@ def _parse_inputs(
                 wcs = None
         else:
             raise TypeError("WCS must be an instance of lsst.afw.geom.SkyWcs, astropy.wcs.WCS, or None.")
+    if wcs is not None and rot90 in [1, 3]:
+        cd = wcs.wcs.cd
+        cd[0, 0], cd[0, 1] = cd[0, 1], cd[0, 0]
+        cd[1, 0], cd[1, 1] = cd[1, 1], cd[1, 0]
     # mask_plane_dict
     if mask_plane_dict is None and hasattr(image, "mask"):
         mask_plane_dict = image.mask.getMaskPlaneDict()
@@ -135,7 +146,7 @@ def _parse_inputs(
         if image.shape != mask.shape:
             logger.warning("The image and mask shapes do not match.")
 
-    return image, mask, mask_plane_dict, wcs, origin
+    return image, mask, mask_plane_dict, wcs, origin, rot90
 
 
 def _crop_data(
@@ -198,8 +209,6 @@ def _crop_data(
         xyslice = (_reverse_slice(yslice), _reverse_slice(xslice))
     elif rot90 == 3:
         xyslice = (xslice, _reverse_slice(yslice))
-    else:
-        raise ValueError("rot90 must be 0, 1, 2, or 3.")
     extent = (x0 + xyslice[1].start, x0 + xyslice[1].stop, y0 + xyslice[0].start, y0 + xyslice[0].stop)
 
     return image, mask, extent
@@ -497,7 +506,9 @@ def aimage(
     show_legend: bool = True,
 ):
     """Display an image with optional mask overlay."""
-    image, mask, mask_plane_dict, wcs, origin = _parse_inputs(image, mask, mask_plane_dict, wcs, origin)
+    image, mask, mask_plane_dict, wcs, origin, rot90 = _parse_inputs(
+        image, mask, mask_plane_dict, wcs, origin, rot90
+    )
     assert isinstance(image, np.ndarray)
     assert mask is None or isinstance(mask, np.ndarray)
     assert mask_plane_dict is None or isinstance(mask_plane_dict, dict)
