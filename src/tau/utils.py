@@ -36,7 +36,14 @@ def print_session_info():
 
 
 def ref_to_title(
-    ref: DatasetRef, modifier: str = "", exclude: str | list[str] = "", delimiter: str = "\n", wrap=80
+    ref: DatasetRef,
+    modifier: str = "",
+    exclude: str | list[str] = "",
+    delimiter: str = "\n",
+    wrap=80,
+    show_dataset_type: bool = True,
+    show_data_id: bool = True,
+    show_run: bool = True,
 ) -> str:
     """Convert a DatasetRef to a title string for a plot.
 
@@ -56,9 +63,15 @@ def ref_to_title(
     title : `str`
         The title string.
     """
-    data_id = {k: v for k, v in ref.dataId.required.items() if k not in exclude}
-    data_id_str = ", ".join([f"{k}: {repr(v)}" for k, v in data_id.items()])
-    parts = [ref.datasetType.name + modifier, data_id_str, ref.run]
+    parts = []
+    if show_dataset_type:
+        parts.append(ref.datasetType.name + modifier)
+    if show_data_id:
+        data_id = {k: v for k, v in ref.dataId.required.items() if k not in exclude}
+        data_id_str = ", ".join([f"{k}: {repr(v)}" for k, v in data_id.items()])
+        parts.append(data_id_str)
+    if show_run:
+        parts.append(ref.run)
     wrapped_parts = [
         textwrap.fill(p, width=wrap, break_long_words=False, break_on_hyphens=False) for p in parts
     ]
