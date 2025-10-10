@@ -115,10 +115,10 @@ def get_exposure_from_ref(
 
     Parameters
     ----------
-    butler : `~lsst.daf.butler.Butler`
-        Butler to use to retrieve the exposure.
     dataset_ref : `~lsst.daf.butler.DatasetRef`
         Dataset reference for the exposure to retrieve.
+    butler : `~lsst.daf.butler.Butler`
+        Butler to use to retrieve the exposure.
     binsize : int, optional
         Factor by which the exposure will be binned (default, no binning).
     camera : `~lsst.afw.cameraGeom.Camera`, optional
@@ -188,7 +188,7 @@ def get_exposures_from_refs(
         List of exposures for the requested dataset refs, optionally binned.
     """
     if max_workers <= 1:
-        return [get_exposure_from_ref(butler, dataset_ref, binsize, camera) for dataset_ref in dataset_refs]
+        return [get_exposure_from_ref(dataset_ref, butler, binsize, camera) for dataset_ref in dataset_refs]
     else:
         get_exposure_from_ref_partial = partial(
             get_exposure_from_ref, butler=butler, binsize=binsize, camera=camera

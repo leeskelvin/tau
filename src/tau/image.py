@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
+from astropy.table import Table, hstack
 from astropy.visualization import (
     AsinhStretch,
     AsymmetricPercentileInterval,
@@ -36,6 +37,8 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.axes_grid1.axes_size import Fixed
 from scipy.ndimage import gaussian_filter
 from skimage.measure import block_reduce
+
+from .query import query_box
 
 __all__ = ["colorbar", "aimage"]
 
@@ -309,6 +312,67 @@ def _get_stretch(
     return stretch
 
 
+def _plot_scatter(
+    ax: Axes,
+    scatter_x: list[float] | np.ndarray | None,
+    scatter_y: list[float] | np.ndarray | None,
+    scatter_index: list[int] | None = None,
+    wcs: WCS | None = None,
+    is_degrees: bool = False,
+    rot90: int = 0,
+    show_wcs: bool = False,
+):
+    """Plot scatter points on an image.
+
+    Parameters
+    ----------
+    ax : Axes
+        The matplotlib axes object to add the points to.
+    scatter_x : list[float] | None
+        The x coordinates of the points to add.
+    scatter_y : list[float] | None
+        The y coordinates of the points to add.
+    scatter_index : list[int] | None, optional
+        The indices of the points to label. If None, no labels are added.
+    wcs : WCS | None, optional
+        The WCS information, if available.
+    is_degrees : bool, optional
+        Whether the scatter_x and scatter_y coordinates are in degrees.
+    rot90 : int, optional
+        The number of times the image and mask were rotated by 90 degrees.
+
+    Notes
+    -----
+    If `is_degrees` is True, `wcs` must be provided.
+    """
+    if is_degrees:
+        assert wcs is not None
+        scatter_x, scatter_y = wcs.world_to_pixel_values(scatter_x, scatter_y)
+    if scatter_x is not None and scatter_y is not None:
+        scatter_x = np.asarray(scatter_x, dtype=float)
+        scatter_y = np.asarray(scatter_y, dtype=float)
+        if not show_wcs:
+            if rot90 == 1:
+                scatter_x, scatter_y = scatter_y, scatter_x
+            elif rot90 == 2:
+                scatter_x, scatter_y = scatter_x, scatter_y
+            elif rot90 == 3:
+                scatter_x, scatter_y = scatter_y, scatter_x
+        ax.scatter(scatter_x, scatter_y, s=25, edgecolor="red", facecolor="none", lw=1, alpha=1)
+        if scatter_index is not None:
+            for i, x, y in zip(scatter_index, scatter_x, scatter_y):
+                ax.annotate(
+                    str(i),
+                    (x, y),
+                    xytext=(3, 3),
+                    textcoords="offset points",
+                    color="red",
+                    fontsize=8,
+                    ha="left",
+                    va="bottom",
+                )
+
+
 def _add_mask(
     ax: Axes,
     mask: np.ndarray,
@@ -478,13 +542,22 @@ def aimage(
     mask_alpha: float = 1.0,
     mask_fontsize: str | float = "xx-small",
     mask_loc: str | int = "upper left",
+    # scatter
+    scatter_x: list[float] | None = None,
+    scatter_y: list[float] | None = None,
+    scatter_index: list[int] | None = None,
+    scatter_degrees: bool = False,
+    # simbad
+    simbad_extra_fields: list[str] = ["g", "r", "i"],
+    simbad_data_query: str | None = None,
     # grid
-    grid_color: str = "white",
+    grid_color: str = "royalblue",
     grid_linestyle: str = "solid",
-    grid_linewidth: float = 1,
+    grid_linewidth: float = 0.5,
+    grid_alpha: float = 0.5,
     # title
     title: object = None,
-    title_fontsize: str | float = "xx-small",
+    title_fontsize: str | float = "small",
     title_loc: Literal["left", "center", "right"] = "left",
     # figure options
     figsize: tuple[int | float, int | float] = (6, 6),
@@ -501,6 +574,8 @@ def aimage(
     show_minor_ticks: bool = False,
     show_cbar: bool | None = None,
     show_mask: bool = False,
+    show_simbad: bool = False,
+    show_scatter_index: bool = True,
     show_grid: bool = False,
     show_wcs: bool = False,
     show_legend: bool = True,
@@ -566,8 +641,45 @@ def aimage(
         rasterized=True,
     )
 
+    if show_simbad:
+        if wcs is None:
+            raise ValueError("No WCS information available to show Simbad sources.")
+        ra_lim, dec_lim = wcs.pixel_to_world_values((extent[0], extent[1]), (extent[2], extent[3]))
+        simbad_results = query_box(ra_lim, dec_lim, simbad_extra_fields)
+        simbad_results.sort("ra", reverse=True)
+        simbad_results = hstack([Table({"index": np.arange(1, len(simbad_results) + 1)}), simbad_results])
+        if simbad_data_query is not None:
+            try:
+                mask = eval(simbad_data_query, {}, {c: simbad_results[c] for c in simbad_results.colnames})
+            except NameError as e:
+                raise ValueError(
+                    f"Requested column not found in Simbad results table: {e}. "
+                    "Perhaps it needs adding to simbad_extra_fields?"
+                )
+            simbad_results = simbad_results[mask]
+        scatter_index, scatter_x, scatter_y = (
+            simbad_results["index"],
+            simbad_results["ra"],
+            simbad_results["dec"],
+        )
+        scatter_degrees = True
+    else:
+        simbad_results = None
+
+    if scatter_x is not None and scatter_y is not None:
+        _plot_scatter(
+            ax,
+            scatter_x,
+            scatter_y,
+            scatter_index if show_scatter_index else None,
+            wcs,
+            is_degrees=scatter_degrees,
+            rot90=rot90,
+            show_wcs=show_wcs,
+        )
+
     if show_grid:
-        ax.grid(color=grid_color, linestyle=grid_linestyle, linewidth=grid_linewidth)
+        ax.grid(color=grid_color, linestyle=grid_linestyle, linewidth=grid_linewidth, alpha=grid_alpha)
 
     try:
         ax.coords[0].set_format_unit("degree", decimal=decimal, show_decimal_unit=show_decimal_unit)
@@ -618,4 +730,4 @@ def aimage(
             plt.show()
         plt.close(fig)
 
-    return {"vmin": vmin, "vmax": vmax, "stretch": stretch}
+    return {"vmin": vmin, "vmax": vmax, "stretch": stretch, "simbad_results": simbad_results}
