@@ -152,9 +152,10 @@ def get_exposure_from_ref(
             detector_y, detector_x = exposure.getBBox().getDimensions()
             native_binsize = int(np.round(np.mean([camera_x / detector_x, camera_y / detector_y])))
             if native_binsize != 1:
-                logger.info(
-                    f"Using already binned image binsize of {native_binsize} for detector {detector_id}."
-                )
+                if native_binsize != binsize:
+                    logger.info(
+                        f"Using already binned image binsize of {native_binsize} for detector {detector_id}."
+                    )
                 return exposure
         return bin_exposure(exposure, binsize)
     else:

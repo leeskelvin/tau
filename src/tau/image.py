@@ -579,6 +579,8 @@ def aimage(
     show_grid: bool = False,
     show_wcs: bool = False,
     show_legend: bool = True,
+    # kwargs
+    **kwargs: Any,
 ):
     """Display an image with optional mask overlay."""
     image, mask, mask_plane_dict, wcs, origin, rot90 = _parse_inputs(
