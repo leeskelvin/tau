@@ -491,7 +491,6 @@ def colorbar(
     fig = ax.figure
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size=Fixed(fixed_size), pad=pad, axes_class=Axes)
-    breakpoint()
     cbar = fig.colorbar(mappable, cax=cax)
     plt.sca(last_axes)
 
