@@ -26,6 +26,7 @@ from astropy.visualization import (
     ZScaleInterval,
 )
 from astropy.wcs import WCS
+from matplotlib import get_backend
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable
 from matplotlib.colorbar import Colorbar
@@ -610,16 +611,22 @@ def aimage(
         raise ValueError("No WCS information available to show WCS.")
 
     if fig is None or ax is None:
-        fig = plt.figure(figsize=figsize, dpi=dpi)
-        ax = fig.add_subplot(1, 1, 1, facecolor=facecolor, projection=wcs if show_wcs else None)
         external_fig = False
+        try:
+            fig = plt.gcf()
+            fig.set_size_inches(figsize)
+            fig.set_dpi(dpi)
+            ax = fig.gca()
+        except Exception:
+            fig = plt.figure(figsize=figsize, dpi=dpi)
+            ax = fig.add_subplot(1, 1, 1, facecolor=facecolor, projection=wcs if show_wcs else None)
     else:
+        external_fig = True
         if show_wcs:
             subplotspec = ax.get_subplotspec()
             if isinstance(subplotspec, SubplotSpec):
                 fig.delaxes(ax)
                 ax = fig.add_subplot(subplotspec, projection=wcs)
-        external_fig = True
 
     if fwhm > 0:
         sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
@@ -727,8 +734,12 @@ def aimage(
     if not external_fig:
         if fname is not None:
             plt.savefig(fname, dpi=dpi, bbox_inches="tight")
+            plt.close(fig)
         else:
-            plt.show()
-        plt.close(fig)
+            if "matploterm" in get_backend():
+                fig.canvas.draw()
+            else:
+                plt.show()
+                plt.close(fig)
 
     return {"vmin": vmin, "vmax": vmax, "stretch": stretch, "simbad_results": simbad_results}
