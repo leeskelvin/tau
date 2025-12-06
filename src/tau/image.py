@@ -616,7 +616,8 @@ def aimage(
             fig = plt.gcf()
             fig.set_size_inches(figsize)
             fig.set_dpi(dpi)
-            ax = fig.gca()
+            fig.clear()
+            ax = fig.add_subplot(1, 1, 1, facecolor=facecolor, projection=wcs if show_wcs else None)
         except Exception:
             fig = plt.figure(figsize=figsize, dpi=dpi)
             ax = fig.add_subplot(1, 1, 1, facecolor=facecolor, projection=wcs if show_wcs else None)
@@ -654,7 +655,7 @@ def aimage(
             raise ValueError("No WCS information available to show Simbad sources.")
         ra_lim, dec_lim = wcs.pixel_to_world_values((extent[0], extent[1]), (extent[2], extent[3]))
         simbad_results = query_box(ra_lim, dec_lim, simbad_extra_fields)
-        simbad_results.sort("ra", reverse=True)
+        simbad_results.sort("dec", reverse=True)
         simbad_results = hstack([Table({"index": np.arange(1, len(simbad_results) + 1)}), simbad_results])
         if simbad_data_query is not None:
             try:
