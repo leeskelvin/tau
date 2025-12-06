@@ -8,14 +8,20 @@ import sys
 import textwrap
 import time
 
-# from collections.abc import Mapping
+import numpy as np
 import yaml
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+from astropy.wcs import WCS
+from astropy.wcs.utils import fit_wcs_from_points, pixel_to_skycoord
+from lsst.afw.geom import SkyWcs
 from lsst.daf.butler import DatasetRef
+from lsst.geom import Box2I
 from lsst.pipe.base import Pipeline
 from lsst.source.injection.utils._make_injection_pipeline import _parse_config_override
 from lsst.utils.packages import getEnvironmentPackages
 
-__all__ = ["print_session_info", "ref_to_title", "convert_selection_sets", "dump_config"]
+__all__ = ["print_session_info", "ref_to_title", "convert_selection_sets", "dump_config", "fit_lsst_wcs"]
 
 
 def print_session_info():
@@ -76,18 +82,6 @@ def ref_to_title(
         textwrap.fill(p, width=wrap, break_long_words=False, break_on_hyphens=False) for p in parts
     ]
     return delimiter.join(wrapped_parts)
-
-
-# def walk_and_report(obj, path="root"):
-#     if isinstance(obj, Mapping):
-#         for k, v in obj.items():
-#             walk_and_report(v, f"{path}.{k}")
-#     elif isinstance(obj, list):
-#         for i, v in enumerate(obj):
-#             walk_and_report(v, f"{path}[{i}]")
-#     else:
-#         if "lsst" in type(obj).__module__:
-#             print(f"{path}\n{obj}\n{type(obj)}\n\n")
 
 
 def convert_selection_sets(obj: dict):
@@ -190,3 +184,45 @@ def dump_config(
         pipeline_config_yaml = re.sub(pattern, replacement, pipeline_config_yaml, flags=re.MULTILINE)
 
     return pipeline_config_yaml.strip()
+
+
+def fit_lsst_wcs(
+    wcs: SkyWcs,
+    bbox: Box2I,
+    num_points: int = 11,
+    sip_degree: int = 3,
+) -> tuple[WCS, np.ndarray]:
+    """Fit an `astropy.wcs.WCS` to an `lsst.afw.geom.SkyWcs`.
+
+    Parameters
+    ----------
+    wcs : `lsst.afw.geom.SkyWcs`
+        The LSST WCS to fit.
+    bbox : `lsst.geom.Box2I`
+        The bounding box in pixel coordinates over which to fit the WCS.
+    num_points : `int`, optional
+        The number of points to sample along each axis for the fit.
+    sip_degree : `int`, optional
+        The degree of the SIP distortion to fit.
+
+    Returns
+    -------
+    astropy_wcs : `astropy.wcs.WCS`
+        The fitted Astropy WCS.
+    residuals_arcsec : `np.ndarray`
+        The residuals of the fit in arcseconds.
+    """
+    xs = np.linspace(bbox.getMinX(), bbox.getMaxX(), num_points)
+    ys = np.linspace(bbox.getMinY(), bbox.getMaxY(), num_points)
+    pixel_x, pixel_y = np.meshgrid(xs, ys)
+    pixel_x = pixel_x.ravel()
+    pixel_y = pixel_y.ravel()
+    sky_ra, sky_dec = wcs.pixelToSkyArray(pixel_x, pixel_y, degrees=True)
+
+    sky = SkyCoord(sky_ra * u.deg, sky_dec * u.deg, frame="icrs")
+    astropy_wcs = fit_wcs_from_points((pixel_x, pixel_y), sky, projection="TAN", sip_degree=sip_degree)
+
+    astropy_sky = pixel_to_skycoord(pixel_x, pixel_y, astropy_wcs)
+    residuals_arcsec = astropy_sky.separation(sky).arcsec
+
+    return (astropy_wcs, residuals_arcsec)
