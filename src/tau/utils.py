@@ -220,9 +220,12 @@ def fit_lsst_wcs(
     sky_ra, sky_dec = wcs.pixelToSkyArray(pixel_x, pixel_y, degrees=True)
 
     sky = SkyCoord(sky_ra * u.deg, sky_dec * u.deg, frame="icrs")
-    astropy_wcs = fit_wcs_from_points((pixel_x, pixel_y), sky, projection="TAN", sip_degree=sip_degree)
+    astropy_pixel_x = pixel_x + 1
+    astropy_pixel_y = pixel_y + 1
+    astropy_pixel_xy = (astropy_pixel_x, astropy_pixel_y)
+    astropy_wcs = fit_wcs_from_points(astropy_pixel_xy, sky, projection="TAN", sip_degree=sip_degree)
 
-    astropy_sky = pixel_to_skycoord(pixel_x, pixel_y, astropy_wcs)
+    astropy_sky = pixel_to_skycoord(astropy_pixel_x, astropy_pixel_y, astropy_wcs)
     residuals_arcsec = astropy_sky.separation(sky).arcsec
 
     return (astropy_wcs, residuals_arcsec)

@@ -40,6 +40,7 @@ from scipy.ndimage import gaussian_filter
 from skimage.measure import block_reduce
 
 from .query import query_box
+from .utils import fit_lsst_wcs
 
 __all__ = ["colorbar", "aimage"]
 
@@ -96,30 +97,17 @@ def _parse_inputs(
     rot90 : int
         The number of times the image and mask were rotated by 90 degrees.
     """
-    # 90 degree rotation
-    rot90 = rot90 % 4
+    bbox = getattr(image, "getBBox", lambda: None)()
+    rot90 = rot90 % 4  # 90 degree rotation
     # origin
     if origin is None:
-        bbox = getattr(image, "getBBox", lambda: None)()
         origin = tuple(bbox.getBegin()) if bbox is not None else (0, 0)
-    # WCS
+    # SkyWcs
     if wcs is None:
         if hasattr(image, "wcs"):
             wcs = image.wcs
         elif hasattr(image, "getWcs"):
             wcs = image.getWcs()
-    if wcs is not None and not isinstance(wcs, WCS):
-        if hasattr(wcs, "getFitsMetadata"):
-            try:
-                wcs = WCS(wcs.getFitsMetadata().toDict())
-            except RuntimeError:
-                wcs = None
-        else:
-            raise TypeError("WCS must be an instance of lsst.afw.geom.SkyWcs, astropy.wcs.WCS, or None.")
-    if wcs is not None and rot90 in [1, 3]:
-        cd = wcs.wcs.cd
-        cd[0, 0], cd[0, 1] = cd[0, 1], cd[0, 0]
-        cd[1, 0], cd[1, 1] = cd[1, 1], cd[1, 0]
     # mask_plane_dict
     if mask_plane_dict is None and hasattr(image, "mask"):
         mask_plane_dict = image.mask.getMaskPlaneDict()
@@ -145,6 +133,22 @@ def _parse_inputs(
         image = image.getImageF().array
     elif hasattr(image, "array"):
         image = image.array
+    # WCS
+    if wcs is not None and not isinstance(wcs, WCS):
+        if hasattr(wcs, "getFitsMetadata"):
+            try:
+                wcs = WCS(wcs.getFitsMetadata().toDict())
+            except RuntimeError:
+                try:
+                    wcs, _ = fit_lsst_wcs(wcs, bbox)
+                except Exception:
+                    wcs = None
+        else:
+            raise TypeError("WCS must be an instance of lsst.afw.geom.SkyWcs, astropy.wcs.WCS, or None.")
+    if wcs is not None and rot90 in [1, 3]:
+        cd = wcs.wcs.cd
+        cd[0, 0], cd[0, 1] = cd[0, 1], cd[0, 0]
+        cd[1, 0], cd[1, 1] = cd[1, 1], cd[1, 0]
 
     if mask is not None:
         if image.shape != mask.shape:
