@@ -81,8 +81,8 @@ def query_region(
     try:
         custom_simbad.add_votable_fields(*extra_fields)
     except ValueError as e:
-        votable_fields = ", ".join(Simbad.list_votable_fields()["name"])
-        raise ValueError(f"{e} Valid extra_fields are: {votable_fields}")
+        votable_fields = '", "'.join(Simbad.list_votable_fields()["name"])
+        raise ValueError(f'{e} Valid extra_fields are in: ["{votable_fields}"]')
     result = custom_simbad.query_region(coordinates, radius=radius)
     cols_to_keep = ["main_id", "ra", "dec"] + extra_fields
     if result is not None:
@@ -94,7 +94,7 @@ def query_region(
 def query_box(
     ra_lim: tuple[float, float],
     dec_lim: tuple[float, float],
-    extra_fields: list[str] = [],
+    extra_fields: list[str] | str = [],
 ) -> Table:
     """Query Simbad for objects within a rectangular RA/Dec box.
 
@@ -107,7 +107,7 @@ def query_box(
         Tuple of right ascension limits of the box in degrees.
     dec_lim : `tuple`[`float`, `float`]
         Tuple of declination limits of the box in degrees.
-    extra_fields : `list`[`str`]
+    extra_fields : `list`[`str`] | str
         Additional fields to include in the query. These should be valid
         VOTable field names as listed by `Simbad.list_votable_fields()`.
 
@@ -120,6 +120,8 @@ def query_box(
     ra_center = 0.5 * (ra_lim[0] + ra_lim[1])
     dec_center = 0.5 * (dec_lim[0] + dec_lim[1])
     radius = np.sqrt((np.max(ra_lim) - ra_center) ** 2 + (np.max(dec_lim) - dec_center) ** 2)
+    if isinstance(extra_fields, str):
+        extra_fields = [extra_fields]
     result = query_region(ra_center, dec_center, radius, extra_fields, unit="degree")
     if result is None:
         return Table()  # no results

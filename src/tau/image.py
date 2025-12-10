@@ -345,6 +345,8 @@ def _plot_scatter(
         Whether the scatter_x and scatter_y coordinates are in degrees.
     rot90 : int, optional
         The number of times the image and mask were rotated by 90 degrees.
+    show_wcs : bool, optional
+        If False, adjust the scatter points for image rotation.
 
     Notes
     -----
@@ -547,12 +549,12 @@ def aimage(
     mask_fontsize: str | float = "xx-small",
     mask_loc: str | int = "upper left",
     # scatter
-    scatter_x: list[float] | None = None,
-    scatter_y: list[float] | None = None,
+    scatter_x: np.ndarray | list[float] | None = None,
+    scatter_y: np.ndarray | list[float] | None = None,
     scatter_index: list[int] | None = None,
     scatter_degrees: bool = False,
     # simbad
-    simbad_extra_fields: list[str] = ["g", "r", "i"],
+    simbad_extra_fields: list[str] | str = ["g", "r", "i"],
     simbad_data_query: str | None = None,
     # grid
     grid_color: str = "royalblue",
@@ -657,25 +659,43 @@ def aimage(
     if show_simbad:
         if wcs is None:
             raise ValueError("No WCS information available to show Simbad sources.")
-        ra_lim, dec_lim = wcs.pixel_to_world_values((extent[0], extent[1]), (extent[2], extent[3]))
-        simbad_results = query_box(ra_lim, dec_lim, simbad_extra_fields)
-        simbad_results.sort("dec", reverse=True)
-        simbad_results = hstack([Table({"index": np.arange(1, len(simbad_results) + 1)}), simbad_results])
-        if simbad_data_query is not None:
-            try:
-                mask = eval(simbad_data_query, {}, {c: simbad_results[c] for c in simbad_results.colnames})
-            except NameError as e:
-                raise ValueError(
-                    f"Requested column not found in Simbad results table: {e}. "
-                    "Perhaps it needs adding to simbad_extra_fields?"
-                )
-            simbad_results = simbad_results[mask]
-        scatter_index, scatter_x, scatter_y = (
-            simbad_results["index"],
-            simbad_results["ra"],
-            simbad_results["dec"],
+        corner_ras, corner_decs = wcs.pixel_to_world_values(
+            np.array([extent[0], extent[1], extent[1], extent[0]]),
+            np.array([extent[2], extent[2], extent[3], extent[3]]),
         )
-        scatter_degrees = True
+        simbad_results = query_box(
+            np.percentile(corner_ras, [0, 100]), np.percentile(corner_decs, [0, 100]), simbad_extra_fields
+        )
+        if len(simbad_results) > 0:
+            scatter_x, scatter_y = wcs.world_to_pixel_values(simbad_results["ra"], simbad_results["dec"])
+            scatter_x = np.array(scatter_x)
+            scatter_y = np.array(scatter_y)
+            mask_in_bounds = (
+                (scatter_x >= extent[0])
+                & (scatter_x <= extent[1])
+                & (scatter_y >= extent[2])
+                & (scatter_y <= extent[3])
+            )
+            scatter_x = scatter_x[mask_in_bounds]
+            scatter_y = scatter_y[mask_in_bounds]
+            simbad_results = simbad_results[mask_in_bounds]
+            simbad_results.sort("dec", reverse=True)
+            simbad_results = hstack([Table({"index": np.arange(0, len(simbad_results))}), simbad_results])
+            if simbad_data_query is not None:
+                try:
+                    mask_data_query = eval(
+                        simbad_data_query, {}, {c: simbad_results[c] for c in simbad_results.colnames}
+                    )
+                except NameError as e:
+                    raise ValueError(
+                        f"Requested column not found in Simbad results table: {e}. "
+                        "Perhaps it needs adding to simbad_extra_fields?"
+                    )
+                scatter_x = scatter_x[mask_data_query]
+                scatter_y = scatter_y[mask_data_query]
+                simbad_results = simbad_results[mask_data_query]
+            scatter_index = simbad_results["index"]
+            scatter_degrees = False
     else:
         simbad_results = None
 
