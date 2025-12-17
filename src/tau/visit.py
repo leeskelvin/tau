@@ -4,7 +4,7 @@ Tools which manipulate visit-level imaging.
 
 import logging
 from collections.abc import Sequence
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from math import ceil
 from typing import Any
@@ -26,7 +26,7 @@ __all__ = [
     "bin_exposure",
     "get_exposure_from_ref",
     "get_exposures_from_refs",
-    "make_visit_mosaic",
+    "make_mosaic",
     "Visit",
 ]
 
@@ -56,6 +56,8 @@ def make_exposure(data: Any, detector: Detector | None = None) -> ExposureF:
     if not isinstance(data, ExposureF):
         if hasattr(data, "getImage"):
             exposure = ExposureF(MaskedImageF(data.getImage()))
+        elif hasattr(data, "array"):
+            exposure = ExposureF(MaskedImageF(data))
         else:
             raise ValueError("Dataset is not an ExposureF, and cannot be coerced into one.")
     else:
@@ -109,7 +111,11 @@ def bin_exposure(exposure: ExposureF, binsize: int) -> ExposureF:
 
 
 def get_exposure_from_ref(
-    dataset_ref: DatasetRef, butler: Butler, binsize: int = 1, camera: Camera | None = None
+    dataset_ref: DatasetRef,
+    butler: Butler,
+    binsize: int = 1,
+    camera: Camera | None = None,
+    image_only: bool = False,
 ) -> ExposureF:
     """Get the exposure for a given dataset reference, optionally binned.
 
@@ -124,6 +130,8 @@ def get_exposure_from_ref(
     camera : `~lsst.afw.cameraGeom.Camera`, optional
         Camera to use. Only used to supply detector information when
         the dataset is not an ExposureF or when confirming existing binning.
+    image_only : bool, optional
+        If True, only retrieve the image component of the exposure.
 
     Returns
     -------
@@ -131,7 +139,16 @@ def get_exposure_from_ref(
         Exposure for the requested dataset ref, optionally binned.
     """
     try:
-        exposure = butler.get(dataset_ref)
+        if image_only:
+            exposure = butler.get(dataset_ref.makeComponentRef("image"))
+            wcs = butler.get(dataset_ref.makeComponentRef("wcs"))
+            photoCalib = butler.get(dataset_ref.makeComponentRef("photoCalib"))
+            if wcs is not None:
+                exposure.setWcs(wcs)
+            if photoCalib is not None:
+                exposure.setPhotoCalib(photoCalib)
+        else:
+            exposure = butler.get(dataset_ref)
     except FileNotFoundError:
         logger.error(f"Dataset not found for {dataset_ref}.")
         return None
@@ -167,21 +184,26 @@ def get_exposures_from_refs(
     butler: Butler,
     binsize: int = 1,
     camera: Camera | None = None,
-    max_workers: int = 8,
+    image_only: bool = False,
+    max_workers: int = 1,
 ) -> list[ExposureF]:
     """Get exposures for a list of dataset references, optionally binned.
 
     Parameters
     ----------
-    butler : `~lsst.daf.butler.Butler`
-        Butler to use to retrieve the exposures.
     dataset_refs : Sequence[`~lsst.daf.butler.DatasetRef`]
         Dataset references for the exposures to retrieve.
+    butler : `~lsst.daf.butler.Butler`
+        Butler to use to retrieve the exposures.
     binsize : int, optional
         Factor by which the exposures will be binned (default, no binning).
     camera : `~lsst.afw.cameraGeom.Camera`, optional
         Camera to use. Only used to supply detector information when
         the dataset is not an ExposureF or when confirming existing binning.
+    image_only : bool, optional
+        If True, only retrieve the image component of the exposures.
+    max_workers : int, optional
+        The maximum number of worker threads to use for parallel retrieval.
 
     Returns
     -------
@@ -189,17 +211,20 @@ def get_exposures_from_refs(
         List of exposures for the requested dataset refs, optionally binned.
     """
     if max_workers <= 1:
-        return [get_exposure_from_ref(dataset_ref, butler, binsize, camera) for dataset_ref in dataset_refs]
+        return [
+            get_exposure_from_ref(dataset_ref, butler, binsize, camera, image_only)
+            for dataset_ref in dataset_refs
+        ]
     else:
         get_exposure_from_ref_partial = partial(
-            get_exposure_from_ref, butler=butler, binsize=binsize, camera=camera
+            get_exposure_from_ref, butler=butler, binsize=binsize, camera=camera, image_only=image_only
         )
-        with ProcessPoolExecutor(max_workers=max(len(dataset_refs), max_workers)) as executor:
+        with ThreadPoolExecutor(max_workers=min(len(dataset_refs), max_workers)) as executor:
             exposures = list(executor.map(get_exposure_from_ref_partial, dataset_refs))
         return exposures
 
 
-def make_visit_mosaic(
+def make_mosaic(
     exposures: list[ExposureF],
     camera: Camera,
     buffer: int = 10,
@@ -302,7 +327,7 @@ class Visit:
     def __init__(
         self,
         butler: Butler,
-        dataset_type: str | DatasetType = "calexp",
+        data: str | DatasetType | DatasetRef | Sequence[DatasetRef] = "preliminary_visit_image",
         collections: str | Sequence[str] | None = None,
         **kwargs: Any,
     ):
@@ -312,18 +337,32 @@ class Visit:
         ----------
         butler : Butler
             The butler to use.
-        dataset_type : str | DatasetType, optional
-            The dataset type to query.
+        data : str | DatasetType | DatasetRef | Sequence[DatasetRef], optional
+            Either the dataset type to query, or a (list of) DatasetRefs.
         collections : str | Sequence[str], optional
             The collections to query. If None, all collections are queried.
+            Not used if DatasetRefs are provided.
         kwargs : Any
             Additional keyword arguments to pass to the butler.
         """
         self.butler = butler
-        self.dataset_type = dataset_type
-        self.collections = collections
-        self.kwargs = kwargs
-        self._dataset_refs = self._query_datasets(**kwargs)
+        if isinstance(data, (str, DatasetType)):
+            self.dataset_type = data
+            self.collections = collections
+            self.kwargs = kwargs
+            self._dataset_refs = self._query_datasets(**kwargs)
+        elif isinstance(data, DatasetRef):
+            self.dataset_type = data.datasetType
+            self.collections = data.run
+            self.kwargs = None
+            self._dataset_refs = [data]
+        elif isinstance(data, Sequence) and all(isinstance(x, DatasetRef) for x in data):
+            self.dataset_type = data[0].datasetType
+            self.collections = data[0].run
+            self.kwargs = None
+            self._dataset_refs = data
+        else:
+            raise TypeError("data must be str, DatasetType, DatasetRef, or Sequence[DatasetRef]")
         data_ids = [dataset_ref.dataId for dataset_ref in self._dataset_refs]
         if "visit" in data_ids[0]:
             unique_visits = list({data_id["visit"] for data_id in data_ids})
@@ -431,13 +470,22 @@ class Visit:
         camera : `~lsst.afw.cameraGeom.Camera` | None
             The camera for the visit, if found.
         """
+        collection_info = self.butler.collections.query_info(
+            self._dataset_refs[0].run,
+            include_parents=True,
+        )[0]
+        if collection_info is not None and collection_info.parents is not None:
+            (collection_parent,) = collection_info.parents
+            collections = [self.collections, collection_parent]
+        else:
+            collections = self.collections
         try:
             camera_refs = list(
                 set(
                     self.butler.query_datasets(
                         "camera",
                         instrument=self.data_id["instrument"],
-                        collections=self.collections,
+                        collections=collections,
                         find_first=False,
                     )
                 )
@@ -501,7 +549,9 @@ class Visit:
 
         return f"{data_info}\n{run_info}"
 
-    def get_exposure(self, detector_id: int, binsize: int = 1, camera: Camera | None = None) -> ExposureF:
+    def get_exposure(
+        self, detector_id: int, binsize: int = 1, camera: Camera | None = None, image_only: bool = False
+    ) -> ExposureF:
         """Get the exposure for a given detector number, optionally binned.
 
         Parameters
@@ -514,6 +564,8 @@ class Visit:
             Camera to use. Only used to supply detector information when
             the dataset is not an ExposureF. If None, the camera attribute
             of the visit is used.
+        image_only : bool, optional
+            If True, only retrieve the image component of the exposure.
 
         Returns
         -------
@@ -527,7 +579,9 @@ class Visit:
                 f"Detector {detector_id} not found in visit. Available detectors: {self.detector_ids}"
             )
             return None
-        exposure = get_exposure_from_ref(self.dataset_refs[detector_id], self.butler, binsize, camera)
+        exposure = get_exposure_from_ref(
+            self.dataset_refs[detector_id], self.butler, binsize, camera, image_only
+        )
         return exposure
 
     def get_mosaic(
@@ -539,6 +593,7 @@ class Visit:
         background_value: float = np.nan,
         background_masks: list[str] = ["NO_DATA"],
         crop: bool = False,
+        image_only: bool = False,
     ) -> MaskedImageF:
         """Generate a mosaic of detectors in the visit, optionally binned.
 
@@ -560,6 +615,8 @@ class Visit:
             Background masks to use.
         crop : bool, optional
             Crop the camera image to the bounding box of the detectors?
+        image_only : bool, optional
+            If True, only retrieve the image component of the exposures.
 
         Returns
         -------
@@ -576,11 +633,11 @@ class Visit:
 
         binned_exposures = []
         for detector_id in detector_ids:
-            binned_exposure = self.get_exposure(detector_id, binsize, camera)
+            binned_exposure = self.get_exposure(detector_id, binsize, camera, image_only)
             if binned_exposure is not None:
                 binned_exposures.append(binned_exposure)
 
-        return make_visit_mosaic(
+        return make_mosaic(
             exposures=binned_exposures,
             camera=camera,
             buffer=buffer,
