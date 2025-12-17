@@ -506,6 +506,7 @@ def colorbar(
 
     # Generate unique tick labels with increasing precision as necessary
     tick_values = cbar.get_ticks()
+    tick_values = [val for val in tick_values if mappable.get_clim()[0] <= val <= mappable.get_clim()[1]]
     cbar.set_ticks(tick_values)
     cbar.ax.minorticks_off()
     for decimals in range(0, 7):

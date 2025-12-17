@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from math import ceil
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from lsst.afw.cameraGeom import FOCAL_PLANE, Camera, Detector
@@ -38,7 +38,12 @@ handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
 logger.addHandler(handler)
 
 
-def make_exposure(data: Any, detector: Detector | None = None) -> ExposureF:
+def make_exposure(
+    data: Any,
+    detector: Detector | None = None,
+    wcs: Any = None,
+    photoCalib: Any = None,
+) -> ExposureF:
     """Coerce input data into an ExposureF, where possible.
 
     Parameters
@@ -64,6 +69,10 @@ def make_exposure(data: Any, detector: Detector | None = None) -> ExposureF:
         exposure = data
     if detector is not None:
         exposure.setDetector(detector)
+    if wcs is not None:
+        exposure.setWcs(wcs)
+    if photoCalib is not None:
+        exposure.setPhotoCalib(photoCalib)
     return exposure
 
 
@@ -138,15 +147,13 @@ def get_exposure_from_ref(
     exposure : `~lsst.afw.image.ExposureF`
         Exposure for the requested dataset ref, optionally binned.
     """
+    wcs = None
+    photoCalib = None
     try:
         if image_only:
             exposure = butler.get(dataset_ref.makeComponentRef("image"))
             wcs = butler.get(dataset_ref.makeComponentRef("wcs"))
             photoCalib = butler.get(dataset_ref.makeComponentRef("photoCalib"))
-            if wcs is not None:
-                exposure.setWcs(wcs)
-            if photoCalib is not None:
-                exposure.setPhotoCalib(photoCalib)
         else:
             exposure = butler.get(dataset_ref)
     except FileNotFoundError:
@@ -156,9 +163,9 @@ def get_exposure_from_ref(
     if not isinstance(exposure, ExposureF):
         if detector_id is not None:
             assert camera is not None and isinstance(camera, Camera)
-            exposure = make_exposure(exposure, camera[detector_id])
+            exposure = make_exposure(exposure, camera[detector_id], wcs=wcs, photoCalib=photoCalib)
         else:
-            exposure = make_exposure(exposure)
+            exposure = make_exposure(exposure, wcs=wcs, photoCalib=photoCalib)
     if not exposure.getDetector() and detector_id is not None:
         assert camera is not None and isinstance(camera, Camera)
         exposure.setDetector(camera[detector_id])
@@ -376,7 +383,7 @@ class Visit:
                 raise ValueError(f"Multiple exposures found in query: {examples}")
         self._dataset_refs.sort(key=lambda dataset_ref: dataset_ref.dataId["detector"])
         self._data_ids = [dataset_ref.dataId for dataset_ref in self._dataset_refs]
-        self.detector_ids = [data_id["detector"] for data_id in self._data_ids]
+        self.detector_ids = cast(list[int], [data_id["detector"] for data_id in self._data_ids])
         self.dataset_refs = dict(zip(self.detector_ids, self._dataset_refs))
         self.data_id = self._get_visit_data_id(self._data_ids)
         self.data_ids = dict(zip(self.detector_ids, self._data_ids))
@@ -470,22 +477,21 @@ class Visit:
         camera : `~lsst.afw.cameraGeom.Camera` | None
             The camera for the visit, if found.
         """
+        collections = (
+            [self.collections] if isinstance(self.collections, str) else list(self.collections or [])
+        )
         collection_info = self.butler.collections.query_info(
             self._dataset_refs[0].run,
             include_parents=True,
         )[0]
-        if collection_info is not None and collection_info.parents is not None:
-            (collection_parent,) = collection_info.parents
-            collections = [self.collections, collection_parent]
-        else:
-            collections = self.collections
+        parents = list(collection_info.parents) if collection_info and collection_info.parents else []
         try:
             camera_refs = list(
                 set(
                     self.butler.query_datasets(
                         "camera",
                         instrument=self.data_id["instrument"],
-                        collections=collections,
+                        collections=collections + parents,
                         find_first=False,
                     )
                 )
