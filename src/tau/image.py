@@ -319,9 +319,9 @@ def _get_stretch(
 
 def _plot_scatter(
     ax: Axes,
-    scatter_x: list[float] | np.ndarray | None,
-    scatter_y: list[float] | np.ndarray | None,
-    scatter_index: list[int] | None = None,
+    scatter_x: Sequence[float] | np.ndarray | None,
+    scatter_y: Sequence[float] | np.ndarray | None,
+    scatter_labels: Sequence[Any] | None = None,
     wcs: WCS | None = None,
     is_degrees: bool = False,
     rot90: int = 0,
@@ -333,12 +333,12 @@ def _plot_scatter(
     ----------
     ax : Axes
         The matplotlib axes object to add the points to.
-    scatter_x : list[float] | None
+    scatter_x : Sequence[float] | None
         The x coordinates of the points to add.
-    scatter_y : list[float] | None
+    scatter_y : Sequence[float] | None
         The y coordinates of the points to add.
-    scatter_index : list[int] | None, optional
-        The indices of the points to label. If None, no labels are added.
+    scatter_labels : Sequence[Any] | None, optional
+        The labels of the points to add. If None, no labels are added.
     wcs : WCS | None, optional
         The WCS information, if available.
     is_degrees : bool, optional
@@ -366,10 +366,10 @@ def _plot_scatter(
             elif rot90 == 3:
                 scatter_x, scatter_y = scatter_y, scatter_x
         ax.scatter(scatter_x, scatter_y, s=25, edgecolor="red", facecolor="none", lw=1, alpha=1)
-        if scatter_index is not None:
-            for i, x, y in zip(scatter_index, scatter_x, scatter_y):
+        if scatter_labels is not None:
+            for scatter_label, x, y in zip(scatter_labels, scatter_x, scatter_y):
                 ax.annotate(
-                    str(i),
+                    str(scatter_label),
                     (x, y),
                     xytext=(3, 3),
                     textcoords="offset points",
@@ -550,12 +550,12 @@ def aimage(
     mask_fontsize: str | float = "xx-small",
     mask_loc: str | int = "upper left",
     # scatter
-    scatter_x: np.ndarray | list[float] | None = None,
-    scatter_y: np.ndarray | list[float] | None = None,
-    scatter_index: list[int] | None = None,
+    scatter_x: Sequence[float] | np.ndarray | None = None,
+    scatter_y: Sequence[float] | np.ndarray | None = None,
+    scatter_labels: str | Sequence[Any] = "index",
     scatter_degrees: bool = False,
     # simbad
-    simbad_extra_fields: list[str] | str = ["g", "r", "i"],
+    simbad_extra_fields: list[str] | str = ["ids", "g", "r", "i"],
     simbad_data_query: str | None = None,
     # grid
     grid_color: str = "royalblue",
@@ -582,7 +582,7 @@ def aimage(
     show_cbar: bool | None = None,
     show_mask: bool = False,
     show_simbad: bool = False,
-    show_scatter_index: bool = True,
+    show_scatter_labels: bool = True,
     show_grid: bool = False,
     show_wcs: bool = False,
     show_legend: bool = True,
@@ -680,7 +680,6 @@ def aimage(
             scatter_x = scatter_x[mask_in_bounds]
             scatter_y = scatter_y[mask_in_bounds]
             simbad_results = simbad_results[mask_in_bounds]
-            simbad_results.sort("dec", reverse=True)
             simbad_results = hstack([Table({"index": np.arange(0, len(simbad_results))}), simbad_results])
             if simbad_data_query is not None:
                 try:
@@ -695,7 +694,11 @@ def aimage(
                 scatter_x = scatter_x[mask_data_query]
                 scatter_y = scatter_y[mask_data_query]
                 simbad_results = simbad_results[mask_data_query]
-            scatter_index = simbad_results["index"]
+            scatter_labels = (
+                simbad_results[scatter_labels]
+                if isinstance(scatter_labels, str) and scatter_labels in simbad_results.colnames
+                else scatter_labels
+            )
             scatter_degrees = False
     else:
         simbad_results = None
@@ -705,7 +708,7 @@ def aimage(
             ax,
             scatter_x,
             scatter_y,
-            scatter_index if show_scatter_index else None,
+            scatter_labels if show_scatter_labels else None,
             wcs,
             is_degrees=scatter_degrees,
             rot90=rot90,

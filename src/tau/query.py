@@ -87,7 +87,7 @@ def query_region(
     cols_to_keep = ["main_id", "ra", "dec"] + extra_fields
     if result is not None:
         result = result[cols_to_keep]
-        result.sort("ra", reverse=True)
+        result.sort("ra", reverse=False)
     return result
 
 
