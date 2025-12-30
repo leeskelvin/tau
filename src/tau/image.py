@@ -479,7 +479,6 @@ def colorbar(
     fixed_size: float = 0.15,
     pad: float = 0.05,
     secondary_converter=None,
-    secondary_label: str | None = None,
 ) -> Colorbar:
     """Create a colorbar for a given mappable.
 
@@ -518,30 +517,16 @@ def colorbar(
     for decimals in range(0, 7):
         formatted_tick_values = [f"{tick_value:.{decimals}f}" for tick_value in tick_values]
         if len(set(formatted_tick_values)) == len(tick_values):
+            if secondary_converter is not None:
+                formatted_tick_values = [
+                    f"{formatted_tick_value} ({secondary_converter(float(tick_value)):.{decimals}f})"
+                    for formatted_tick_value, tick_value in zip(formatted_tick_values, tick_values)
+                ]
             cbar.ax.set_yticklabels(formatted_tick_values)
             break
 
     if label is not None:
         cbar.set_label(label)
-
-    if secondary_converter is not None:
-        ticks = cbar.get_ticks()
-        ax2 = cbar.ax.twinx()
-        ax2.spines["right"].set_position(("outward", 50))
-        ax2.yaxis.set_ticks_position("right")
-        ax2.yaxis.set_label_position("right")
-
-        cbar.ax.spines["right"].set_position(("outward", 0))
-        cbar.ax.yaxis.set_ticks_position("right")
-        cbar.ax.yaxis.set_label_position("right")
-
-        ax2.set_ylim(cbar.ax.get_ylim())
-        ax2.set_yticks(ticks)
-        ax2.set_yticklabels([f"{secondary_converter(t)}" for t in ticks])
-        ax2.minorticks_off()
-
-        if secondary_label is not None:
-            ax2.set_ylabel(secondary_label)
 
     return cbar
 
@@ -594,10 +579,13 @@ def aimage(
     title: object = None,
     title_fontsize: str | float = "small",
     title_loc: Literal["left", "center", "right"] = "left",
+    # labels
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    label_fontsize: str | float = "medium",
     # colorbar
     cbar_label: str | None = None,
     cbar_secondary_converter=None,
-    cbar_secondary_label: str | None = None,
     # figure options
     figsize: tuple[int | float, int | float] = (6, 6),
     dpi: int = 300,
@@ -767,6 +755,10 @@ def aimage(
 
     if title is not None:
         ax.set_title(str(title), loc=title_loc, fontsize=title_fontsize)
+    if xlabel is not None:
+        ax.set_xlabel(xlabel, fontsize=label_fontsize)
+    if ylabel is not None:
+        ax.set_ylabel(ylabel, fontsize=label_fontsize)
 
     if show_mask and mask is not None:
         _add_mask(
@@ -795,7 +787,6 @@ def aimage(
             norm=norm,
             label=cbar_label,
             secondary_converter=cbar_secondary_converter,
-            secondary_label=cbar_secondary_label,
         )
 
     if not external_fig:
