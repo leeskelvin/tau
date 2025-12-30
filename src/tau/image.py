@@ -473,7 +473,13 @@ def _add_mask(
 
 
 def colorbar(
-    mappable: ScalarMappable, norm: ImageNormalize | None = None, fixed_size: float = 0.15, pad: float = 0.05
+    mappable: ScalarMappable,
+    norm: ImageNormalize | None = None,
+    label: str | None = None,
+    fixed_size: float = 0.15,
+    pad: float = 0.05,
+    secondary_converter=None,
+    secondary_label: str | None = None,
 ) -> Colorbar:
     """Create a colorbar for a given mappable.
 
@@ -515,6 +521,28 @@ def colorbar(
             cbar.ax.set_yticklabels(formatted_tick_values)
             break
 
+    if label is not None:
+        cbar.set_label(label)
+
+    if secondary_converter is not None:
+        ticks = cbar.get_ticks()
+        ax2 = cbar.ax.twinx()
+        ax2.spines["right"].set_position(("outward", 50))
+        ax2.yaxis.set_ticks_position("right")
+        ax2.yaxis.set_label_position("right")
+
+        cbar.ax.spines["right"].set_position(("outward", 0))
+        cbar.ax.yaxis.set_ticks_position("right")
+        cbar.ax.yaxis.set_label_position("right")
+
+        ax2.set_ylim(cbar.ax.get_ylim())
+        ax2.set_yticks(ticks)
+        ax2.set_yticklabels([f"{secondary_converter(t)}" for t in ticks])
+        ax2.minorticks_off()
+
+        if secondary_label is not None:
+            ax2.set_ylabel(secondary_label)
+
     return cbar
 
 
@@ -552,7 +580,7 @@ def aimage(
     # scatter
     scatter_x: Sequence[float] | np.ndarray | None = None,
     scatter_y: Sequence[float] | np.ndarray | None = None,
-    scatter_labels: str | Sequence[Any] = "index",
+    scatter_labels: str | Sequence[Any] | None = None,
     scatter_degrees: bool = False,
     # simbad
     simbad_extra_fields: list[str] | str = ["ids", "g", "r", "i"],
@@ -566,6 +594,10 @@ def aimage(
     title: object = None,
     title_fontsize: str | float = "small",
     title_loc: Literal["left", "center", "right"] = "left",
+    # colorbar
+    cbar_label: str | None = None,
+    cbar_secondary_converter=None,
+    cbar_secondary_label: str | None = None,
     # figure options
     figsize: tuple[int | float, int | float] = (6, 6),
     dpi: int = 300,
@@ -579,11 +611,11 @@ def aimage(
     # show toggles
     show_axes: bool = True,
     show_minor_ticks: bool = False,
-    show_cbar: bool | None = None,
     show_mask: bool = False,
-    show_simbad: bool = False,
     show_scatter_labels: bool = True,
+    show_simbad: bool = False,
     show_grid: bool = False,
+    show_cbar: bool | None = None,
     show_wcs: bool = False,
     show_legend: bool = True,
     # kwargs
@@ -758,7 +790,13 @@ def aimage(
         show_cbar = True if image.ndim == 2 else False
 
     if show_cbar and norm is not None:
-        _ = colorbar(im, norm=norm)
+        _ = colorbar(
+            im,
+            norm=norm,
+            label=cbar_label,
+            secondary_converter=cbar_secondary_converter,
+            secondary_label=cbar_secondary_label,
+        )
 
     if not external_fig:
         if fname is not None:
