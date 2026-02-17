@@ -511,7 +511,7 @@ def colorbar(
 
     # Generate unique tick labels with increasing precision as necessary
     tick_values = cbar.get_ticks()
-    tick_values = [val for val in tick_values if mappable.get_clim()[0] <= val <= mappable.get_clim()[1]]
+    # tick_values = [val for val in tick_values if mappable.get_clim()[0] <= val <= mappable.get_clim()[1]]
     cbar.set_ticks(tick_values)
     cbar.ax.minorticks_off()
     for decimals in range(0, 7):
@@ -794,10 +794,8 @@ def aimage(
             plt.savefig(fname, dpi=dpi, bbox_inches="tight")
             plt.close(fig)
         else:
-            if "matploterm" in get_backend():
-                fig.canvas.draw()
-            else:
-                plt.show()
+            plt.show()
+            if "matploterm" not in get_backend():
                 plt.close(fig)
 
     return {"vmin": vmin, "vmax": vmax, "stretch": stretch, "simbad_results": simbad_results}
