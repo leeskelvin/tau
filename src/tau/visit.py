@@ -109,12 +109,22 @@ def bin_exposure(exposure: ExposureF, binsize: int) -> ExposureF:
         xy.setY(xy[1] / binsize)
         ad = wcs.getSkyOrigin()
         cd = wcs.getCdMatrix().copy() * binsize
-        wcs_binned = makeSkyWcs(
-            crpix=xy,
-            crval=ad,
-            cdMatrix=cd,
-        )
-        binned_exposure.setWcs(wcs_binned)
+
+        # Skip obviously bad WCS
+        if np.isfinite(cd).all() and np.isfinite([xy[0], xy[1]]).all():
+            try:
+                wcs_binned = makeSkyWcs(crpix=xy, crval=ad, cdMatrix=cd)
+            except RuntimeError:
+                logger.warning(f"Detector {exposure.getDetector().getId()}: Failed to create binned WCS.")
+                binned_exposure.setWcs(None)
+            else:
+                binned_exposure.setWcs(wcs_binned)
+        else:
+            logger.warning(
+                f"Detector {exposure.getDetector().getId()}: "
+                "Skipping binned WCS creation due to non-finite CD matrix or CRPIX values."
+            )
+            binned_exposure.setWcs(None)
 
     return binned_exposure
 
@@ -381,7 +391,13 @@ class Visit:
             if len(unique_exposures) > 1:
                 examples = str(unique_exposures[:5])[1:-1] + ("..." if len(unique_exposures) > 5 else "")
                 raise ValueError(f"Multiple exposures found in query: {examples}")
-        self._dataset_refs.sort(key=lambda dataset_ref: dataset_ref.dataId["detector"])
+        self._dataset_refs.sort(key=lambda dataset_ref: (dataset_ref.dataId["detector"], dataset_ref.run))
+        seen = set()
+        self._dataset_refs = [
+            ref
+            for ref in self._dataset_refs
+            if not (ref.dataId["detector"] in seen or seen.add(ref.dataId["detector"]))
+        ]
         self._data_ids = [dataset_ref.dataId for dataset_ref in self._dataset_refs]
         self.detector_ids = cast(list[int], [data_id["detector"] for data_id in self._data_ids])
         self.dataset_refs = dict(zip(self.detector_ids, self._dataset_refs))
@@ -599,7 +615,7 @@ class Visit:
         background_value: float = np.nan,
         background_masks: list[str] = ["NO_DATA"],
         crop: bool = False,
-        image_only: bool = False,
+        image_only: bool = True,
     ) -> MaskedImageF:
         """Generate a mosaic of detectors in the visit, optionally binned.
 
