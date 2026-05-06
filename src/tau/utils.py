@@ -15,13 +15,21 @@ from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 from astropy.wcs.utils import fit_wcs_from_points, pixel_to_skycoord
 from lsst.afw.geom import SkyWcs
+from lsst.afw.image import ExposureF, Mask
 from lsst.daf.butler import DatasetRef
-from lsst.geom import Box2I
+from lsst.geom import Box2I, Point2I
 from lsst.pipe.base import Pipeline
 from lsst.source.injection.utils._make_injection_pipeline import _parse_config_override
 from lsst.utils.packages import getEnvironmentPackages
 
-__all__ = ["print_session_info", "ref_to_title", "convert_selection_sets", "dump_config", "fit_lsst_wcs"]
+__all__ = [
+    "print_session_info",
+    "ref_to_title",
+    "convert_selection_sets",
+    "dump_config",
+    "fit_lsst_wcs",
+    "stitch_exposures",
+]
 
 
 def print_session_info():
@@ -229,3 +237,116 @@ def fit_lsst_wcs(
     residuals_arcsec = astropy_sky.separation(sky).arcsec
 
     return (astropy_wcs, residuals_arcsec)
+
+
+def stitch_exposures(exposures: list[ExposureF], overlap: str = "overwrite", ramp_width: int = 32):
+    """Stitch aligned ``ExposureF`` objects into a single larger exposure.
+
+    Parameters
+    ----------
+    exposures : `list` [`lsst.afw.image.ExposureF`]
+        Input exposures to place into one output parent frame.
+        All inputs are assumed to already share the same pixel grid;
+        this function does not warp between WCS solutions.
+    overlap : `str`, optional
+        Policy for pixels covered by more than one exposure.
+
+        - ``"overwrite"``: later exposures replace earlier ones.
+        - ``"average"``: overlapping pixels are combined with equal weights.
+        - ``"ramp"``: overlapping pixels are feathered using edge-distance
+          weights that rise from 0 to 1 over ``ramp_width`` pixels.
+    ramp_width : `int`, optional
+        Width of the feathering zone used when ``overlap="ramp"``.
+
+    Returns
+    -------
+    stitched : `lsst.afw.image.ExposureF`
+        Output exposure spanning the union of the input bounding boxes.
+
+    Notes
+    -----
+    Image values are combined according to ``overlap``.
+    Masks are bitwise-ORed over contributing pixels.
+    Variance is propagated with the same weights used for the image,
+    using ``sum(w_i^2 var_i) / sum(w_i)^2``.
+    """
+    exposures = list(exposures)
+    if not exposures:
+        raise ValueError("exposures must contain at least one ExposureF")
+
+    valid_modes = {"overwrite", "average", "ramp"}
+    if overlap not in valid_modes:
+        raise ValueError(f"overlap must be one of {sorted(valid_modes)}, got {overlap!r}")
+    if ramp_width <= 0:
+        raise ValueError("ramp_width must be positive")
+
+    min_x = min(exp.getBBox().getMinX() for exp in exposures)
+    min_y = min(exp.getBBox().getMinY() for exp in exposures)
+    max_x = max(exp.getBBox().getMaxX() for exp in exposures)
+    max_y = max(exp.getBBox().getMaxY() for exp in exposures)
+    out_bbox = Box2I(Point2I(min_x, min_y), Point2I(max_x, max_y))
+
+    first = exposures[0]
+    stitched = ExposureF(out_bbox, first.getWcs())
+    stitched.mask.conformMaskPlanes(first.mask.getMaskPlaneDict())
+    no_data = Mask.getPlaneBitMask("NO_DATA")
+    stitched.maskedImage.set(np.nan, no_data, np.inf)
+
+    try:
+        stitched.setFilter(first.getFilter())
+    except Exception:
+        pass
+    try:
+        stitched.setPhotoCalib(first.getPhotoCalib())
+    except Exception:
+        pass
+
+    if overlap == "overwrite":
+        for exp in exposures:
+            stitched.maskedImage.assign(exp.maskedImage, exp.getBBox())
+        return stitched
+
+    out_image = stitched.image.array
+    out_mask = stitched.mask.array
+    out_var = stitched.variance.array
+    sum_w = np.zeros_like(out_image, dtype=np.float32)  # weight per pixel
+    sum_i = np.zeros_like(out_image, dtype=np.float32)  # weighted image sum
+    sum_v = np.zeros_like(out_var, dtype=np.float32)  # weighted variance sum
+
+    def _bbox_slices(bbox):
+        y0 = bbox.getMinY() - out_bbox.getMinY()
+        y1 = bbox.getMaxY() - out_bbox.getMinY() + 1
+        x0 = bbox.getMinX() - out_bbox.getMinX()
+        x1 = bbox.getMaxX() - out_bbox.getMinX() + 1
+        return slice(y0, y1), slice(x0, x1)
+
+    def _ramp_weights(shape):
+        height, width = shape
+        xdist = np.minimum(np.arange(width) + 1, np.arange(width, 0, -1)).astype(np.float32)
+        ydist = np.minimum(np.arange(height) + 1, np.arange(height, 0, -1)).astype(np.float32)
+        wx = np.clip(xdist / ramp_width, 0.0, 1.0)
+        wy = np.clip(ydist / ramp_width, 0.0, 1.0)
+        return wy[:, None] * wx[None, :]
+
+    for exp in exposures:
+        bbox = exp.getBBox()
+        ys, xs = _bbox_slices(bbox)
+        image = exp.image.array.astype(np.float32, copy=False)
+        mask = exp.mask.array
+        variance = exp.variance.array.astype(np.float32, copy=False)
+
+        if overlap == "average":
+            weights = np.ones_like(image, dtype=np.float32)
+        else:
+            weights = _ramp_weights(image.shape)
+
+        sum_w[ys, xs] += weights
+        sum_i[ys, xs] += weights * image
+        sum_v[ys, xs] += (weights**2) * variance
+        out_mask[ys, xs] |= mask
+
+    valid = sum_w > 0
+    out_image[valid] = sum_i[valid] / sum_w[valid]
+    out_var[valid] = sum_v[valid] / (sum_w[valid] ** 2)
+    out_mask[valid] = np.bitwise_and(out_mask[valid], np.bitwise_not(no_data).astype(out_mask.dtype))
+    return stitched
