@@ -7,6 +7,7 @@ import re
 import sys
 import textwrap
 import time
+from collections.abc import Sequence
 
 import numpy as np
 import yaml
@@ -50,7 +51,7 @@ def print_session_info():
 
 
 def ref_to_title(
-    ref: DatasetRef,
+    ref: DatasetRef | Sequence[DatasetRef],
     modifier: str = "",
     exclude: str | list[str] = "",
     delimiter: str = "\n",
@@ -59,12 +60,12 @@ def ref_to_title(
     show_data_id: bool = True,
     show_run: bool = True,
 ) -> str:
-    """Convert a DatasetRef to a title string for a plot.
+    """Convert one or more DatasetRefs to a title string for a plot.
 
     Parameters
     ----------
-    ref : `DatasetRef`
-        The DatasetRef to convert.
+    ref : `DatasetRef` | `~collections.abc.Sequence` [`DatasetRef`]
+        One DatasetRef, or multiple DatasetRefs to summarize.
     modifier : `str`, optional
         A modifier string to append to the title.
     exclude : `str` | `list`[`str`], optional
@@ -77,15 +78,65 @@ def ref_to_title(
     title : `str`
         The title string.
     """
+    refs = [ref] if isinstance(ref, DatasetRef) else list(ref)
+    if not refs:
+        return ""
+
+    if isinstance(exclude, str):
+        exclude_set = {exclude} if exclude else set()
+    else:
+        exclude_set = set(exclude)
+
+    def _unique(values):
+        unique = []
+        for value in values:
+            if value not in unique:
+                unique.append(value)
+        return unique
+
+    def _format_values(values):
+        values = _unique(values)
+        if len(values) == 1:
+            return repr(values[0])
+        return ", ".join(repr(v) for v in values)
+
     parts = []
     if show_dataset_type:
-        parts.append(ref.datasetType.name + modifier)
+        dataset_types = _unique([r.datasetType.name for r in refs])
+        if len(dataset_types) == 1:
+            parts.append(dataset_types[0] + modifier)
+        else:
+            parts.append(f"dataset_types: [{', '.join(dataset_types)}]{modifier}")
+
     if show_data_id:
-        data_id = {k: v for k, v in ref.dataId.required.items() if k not in exclude}
-        data_id_str = ", ".join([f"{k}: {repr(v)}" for k, v in data_id.items()])
+        if len(refs) == 1:
+            data_id = {k: v for k, v in refs[0].dataId.required.items() if k not in exclude_set}
+            data_id_str = ", ".join([f"{k}: {repr(v)}" for k, v in data_id.items()])
+        else:
+            keys = []
+            for r in refs:
+                for key in r.dataId.required:
+                    if key not in exclude_set and key not in keys:
+                        keys.append(key)
+
+            key_values = {k: [r.dataId.required.get(k) for r in refs] for k in keys}
+            data_id_parts = []
+            for key in keys:
+                values = key_values[key]
+                unique_values = _unique(values)
+                formatted = repr(unique_values[0]) if len(unique_values) == 1 else _format_values(values)
+                data_id_parts.append(f"{key}: {formatted}")
+
+            data_id_str = ", ".join(data_id_parts)
         parts.append(data_id_str)
+
     if show_run:
-        parts.append(ref.run)
+        runs = _unique([r.run for r in refs])
+        if len(runs) == 1:
+            parts.append(runs[0])
+        else:
+            parts.append("runs: " + _format_values(runs))
+
     wrapped_parts = [
         textwrap.fill(p, width=wrap, break_long_words=False, break_on_hyphens=False) for p in parts
     ]
