@@ -109,15 +109,28 @@ def _parse_inputs(
         elif hasattr(image, "getWcs"):
             wcs = image.getWcs()
     # mask_plane_dict
-    if mask_plane_dict is None and hasattr(image, "mask"):
-        mask_plane_dict = image.mask.getMaskPlaneDict()
-    elif mask_plane_dict is None and hasattr(mask, "getMaskPlaneDict"):
-        mask_plane_dict = mask.getMaskPlaneDict()
+    if mask_plane_dict is None:
+        if hasattr(image, "mask"):
+            if hasattr(image.mask, "to_legacy"):
+                mask_plane_dict = image.mask.to_legacy().getMaskPlaneDict()
+            else:
+                mask_plane_dict = image.mask.getMaskPlaneDict()
+        elif hasattr(mask, "getMaskPlaneDict"):
+            if hasattr(mask, "to_legacy"):
+                mask_plane_dict = mask.to_legacy().getMaskPlaneDict()
+            else:
+                mask_plane_dict = mask.getMaskPlaneDict()
     # mask
     if mask is None and hasattr(image, "mask"):
-        mask = image.mask.array
+        if hasattr(image.mask, "to_legacy"):
+            mask = image.mask.to_legacy().array
+        else:
+            mask = image.mask.array
     elif hasattr(mask, "image"):
-        mask = mask.image.array
+        if hasattr(mask.image, "to_legacy"):
+            mask = mask.image.to_legacy().array
+        else:
+            mask = mask.image.array
     elif hasattr(mask, "getImage"):
         mask = mask.getImage().array
     elif hasattr(mask, "getImageF"):
