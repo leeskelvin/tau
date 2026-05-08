@@ -97,7 +97,15 @@ def _parse_inputs(
     rot90 : int
         The number of times the image and mask were rotated by 90 degrees.
     """
-    bbox = getattr(image, "getBBox", lambda: None)()
+    # Get bounding box - support both legacy getBBox() and new lsst.images .bbox API
+    if hasattr(image, "getBBox"):
+        bbox = image.getBBox()
+    elif hasattr(image, "bbox"):
+        bbox = image.bbox
+    else:
+        bbox = None
+    if bbox is not None and hasattr(bbox, "to_legacy"):
+        bbox = bbox.to_legacy()
     rot90 = rot90 % 4  # 90 degree rotation
     # origin
     if origin is None:
@@ -108,6 +116,8 @@ def _parse_inputs(
             wcs = image.wcs
         elif hasattr(image, "getWcs"):
             wcs = image.getWcs()
+    if wcs is not None and hasattr(wcs, "to_legacy"):
+        wcs = wcs.to_legacy()
     # mask_plane_dict
     if mask_plane_dict is None:
         if hasattr(image, "mask"):
